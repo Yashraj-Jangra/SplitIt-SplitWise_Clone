@@ -1,152 +1,142 @@
+# Welcome to SplitIt - A Full-Stack SplitWise Clone
 
-# {AppName} - Effortless Group Expense Management
+Ever been on a group trip where someone says "let's split everything equally" and then you spend the next three months chasing people for money? Yeah, that's what this is for. **SplitIt** is a full-stack expense-splitting app that takes the drama out of shared finances.
 
-{AppName} is a modern, full-stack web application designed to simplify expense tracking and settlement within groups. Built with Next.js, Firebase, and ShadCN UI, it provides a seamless and intuitive user experience for managing shared costs, whether for trips, household bills, or any group activity.
+Built with Next.js, Firebase, and Tailwind CSS, it's a clean, feature-rich way to track who owes what—and make sure everyone actually pays up. Whether you're splitting rent, planning a vacation, or just tired of spreadsheet chaos, SplitIt has you covered.
 
-[![{AppName} Dashboard Screenshot](https://placehold.co/800x450.png)](https://placehold.co)
-*A placeholder for the app's dashboard screenshot.*
+> **Note**: This is a public repo and may run a few versions behind the original production site. Check out the [live production version](https://split.cvweb.tech) for the latest features.
+
+![SplitIt Dashboard Screenshot](/public/screenshots/dashboard.png)
+_Your financial overview at a glance—see what you've spent and who owes you._
 
 ## Table of Contents
 
-- [Features](#features)
-  - [Core Functionality](#core-functionality)
-  - [User Experience](#user-experience)
-  - [Admin Panel](#admin-panel)
+- [Key Features](#key-features)
+- [Live Demo & Screenshots](#live-demo--screenshots)
 - [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Firebase Project Setup](#firebase-project-setup)
-  - [Local Installation](#local-installation)
-- [Running the Application](#running-the-application)
-- [Deploying Firebase Rules](#deploying-firebase-rules)
 - [Core Concepts](#core-concepts)
-  - [Groups](#groups)
-  - [Expenses](#expenses)
-  - [Settlements](#settlements)
+- [Project Structure](#project-structure)
 
-## Features
+## Key Features
+
+SplitIt is loaded with features, from the core money-splitting stuff to a full admin panel.
 
 ### Core Functionality
 
-- **Secure User Authentication**: Sign-up and login with Email/Password and Google OAuth.
-- **Group Management**: Create shared expense groups, invite members by email, and manage group settings.
-- **Advanced Expense Tracking**: Add detailed expenses with complex splits (equally, unequally, by shares, or by percentage).
-- **Multi-Payer Support**: An expense can be paid by one or more members.
-- **Real-time Balances**: Instantly see who owes whom within each group and across all groups.
-- **Smart Settlements**: A "Simplify Debts" algorithm calculates the most efficient payment path to clear all debts in a group.
-- **Group Archiving**: Group creators can archive a group once all debts are settled, making it read-only.
-- **Activity & Audit Trail**: A detailed history log tracks every action within a group, from expense creation to member additions.
+-   🔐 **Secure Authentication**: Sign up with email or just use Google OAuth. Your data is safe—it's all protected by Firebase.
+-   👨‍👩‍👧‍👦 **Groups**: Create a group for any occasion (road trip, roommates, etc.), invite people via email, manage members.
+-   💸 **Flexible Expense Splitting**: The bread and butter of this app. Split expenses in multiple ways:
+    -   **Equally**: Everyone pays the same amount.
+    -   **Unequally**: Manually set how much each person owes.
+    -   **By Shares**: Good for when someone stays longer or gets more. Assign shares and split proportionally.
+    -   **By Percentage**: Allocate costs based on percentages (e.g., one person pays 60%, another 40%).
+-   🤝 **Multiple Payers**: One expense can be paid by multiple people, because real life is messy.
+-   📊 **Real-time Balances**: See exactly who owes whom in each group and your overall net balance across all groups.
+-   💡 **Smart Debt Simplification**: Our algorithm figures out the minimum number of payments needed to clear all debts. Less transactions, more time for actual fun.
+-   🗄️ **Archive Groups**: Once everyone pays up, archive a group to keep it as a record.
 
 ### User Experience
 
-- **Personal Dashboard**: A centralized view of your overall net balance, outstanding debts, and recent spending trends.
-- **Financial Analysis**: Visualize personal spending patterns with interactive charts and date-range filters.
-- **Responsive Design**: A beautiful and functional interface on both desktop and mobile devices.
-- **Theming**: Users can choose from several pre-configured themes to personalize their experience.
--   **Global Search**: Instantly find any group, expense, or user with a powerful global search (`⌘K` / `Ctrl+K`).
--   **Notifications**: Receive site-wide announcements and critical alerts from administrators.
+-   🏠 **Personal Dashboard**: See your net balance, who owes you, and who you owe at a glance.
+-   📈 **Spending Analytics**: Check out your spending patterns with charts. Filter by date range to see trends.
+-   📱 **Mobile-Friendly**: Works great on phones, tablets, and desktops. Split bills on the go.
+-   🎨 **Custom Themes**: Pick from different color themes to personalize how the app looks.
+-   🔍 **Global Search**: Hit `Ctrl+K` (or `⌘K` on Mac) to search for groups, expenses, or people instantly.
+-   🔔 **Notifications**: Get announcements and alerts right inside the app.
 
 ### Admin Panel
 
-A dedicated dashboard for administrators to manage the entire application.
+A dedicated dashboard for admins to keep things running smoothly.
 
-- **Site-Wide Statistics**: View key metrics like total users, groups, and expenses.
-- **User & Group Management**: View, edit, and manage all users and groups in the system.
-- **Advanced Data Tools**: A powerful UID replacement tool to migrate user data if necessary.
-- **Broadcast System**: Send in-app announcements or broadcast emails to all registered users.
-- **Site Settings Customization**:
-    - **Branding**: Change the application name and logos.
-    - **Theming**: Create, edit, and delete themes. Set the default theme and control which themes are user-selectable.
-    - **Content Management**: Customize the content for the landing page, about page, legal pages (privacy/terms), and 404 page.
-    - **Expense Categories**: Manage the master and sub-categories for expenses, including keywords for auto-categorization.
-    - **Mail Configuration**: Configure custom SMTP servers for sending transactional emails.
+-   📈 **Site-Wide Statistics**: Get the big picture—how many users, groups, and total expenses in the system.
+-   🛠️ **User & Group Management**: Need to fix something? Edit users, manage groups, or handle user data migrations.
+-   ⚙️ **Customization Central**:
+    -   **Branding**: Change the app name, logos, and make it your own.
+    -   **Theming**: Create custom color themes that users can switch between.
+    -   **Content Management**: Update landing page content, about page, and legal pages.
+    -   **Expense Categories**: Manage the master list of categories so expenses are organized.
+    -   **Mail Configuration**: Connect your own SMTP server so transactional emails actually get sent.
+-   📢 **Broadcast System**: Send in-app announcements or email everyone at once.
+-   🎟️ **Ticket System**: Keep track of user support requests and issues.
+
+## Live Demo & Screenshots
+
+### Core Features in Action
+
+![Group Dashboard](/public/screenshots/group-activity.png)
+_Group activity view—see everything happening in your shared expense groups._
+
+![Group Analytics](/public/screenshots/group-analytics.png)
+_Get insights into group spending patterns with interactive charts and breakdowns._
+
+![Add Expense Form](/public/screenshots/expense-form.png)
+_Adding an expense? Choose from equal splits, percentage-based splits, or custom amounts._
+
+### Admin Panel
+
+Got admin access? The admin panel is where the magic happens—manage users, customize settings, and configure everything about your SplitIt instance.
+
+![Admin Site Settings](/public/screenshots/admin-site-settings.png)
+_Customize branding, manage themes, and control what appears across your app._
+
+![Admin Mail Configuration](/public/screenshots/admin-mail-config.png)
+_Set up your SMTP server so the app can send actual emails (password resets, notifications, etc.)._
+
+![Admin Theme Customization](/public/screenshots/admin-theme-customization.png)
+_Create and manage custom color themes that users can pick from._
+
+![Admin Ticket System](/public/screenshots/admin-ticket-system.png)
+_Handle user support requests and keep track of issues reported by users._
 
 ## Tech Stack
 
-- **Framework**: [Next.js](https://nextjs.org/) (with App Router)
-- **Backend & Database**: [Firebase](https://firebase.google.com/) (Authentication, Firestore)
-- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-- **UI Components**: [ShadCN UI](https://ui.shadcn.com/)
-- **Icons**: [Lucide React](https://lucide.dev/)
-- **Forms**: [React Hook Form](https://react-hook-form.com/) & [Zod](https://zod.dev/)
-- **Charts**: [Recharts](https://recharts.org/)
-- **AI (Optional)**: [Genkit](https://firebase.google.com/docs/genkit)
+Built with a modern, scalable stack:
 
-## Project Structure
-
-A brief overview of the key directories in this project.
-
-```
-/
-├── public/             # Static assets (not present by default, but can be added)
-├── src/
-│   ├── app/            # Next.js App Router: pages, layouts, and API routes
-│   │   ├── (app)/      # Authenticated application routes (dashboard, groups, etc.)
-│   │   ├── (admin)/    # Admin panel routes
-│   │   ├── (auth)/     # Authentication pages (login, signup)
-│   │   ├── (info)/     # Informational pages (about, privacy)
-│   │   ├── api/        # API routes for server-side logic
-│   │   ├── layout.tsx  # Root layout of the application
-│   │   └── page.tsx    # Root page, handles initial routing
-│   ├── components/
-│   │   ├── analysis/   # Components for the financial analysis page
-│   │   ├── auth/       # Authentication-related forms
-│   │   ├── dashboard/  # Dashboard-specific components and cards
-│   │   ├── expenses/   # Expense forms, list items, and dialogs
-│   │   ├── groups/     # Group management components
-│   │   ├── layout/     # Core layout components (App shell, sidebar, header)
-│   │   ├── settlements/# Settlement forms and list items
-│   │   └── ui/         # Reusable UI components from ShadCN
-│   ├── contexts/       # React context providers (Auth, Site Settings, Theme)
-│   ├── firebase/       # Firebase configuration and error handling logic
-│   ├── hooks/          # Custom React hooks (e.g., useIsMobile)
-│   ├── lib/            # Core libraries, utilities, and data fetching logic (mock-data.ts)
-│   ├── themes/         # Theme color definitions
-│   └── types/          # TypeScript type definitions for the application
-├── firebase.json       # Firebase deployment configuration for rules and indexes
-├── firestore.rules     # Firestore security rules
-├── next.config.ts      # Next.js configuration file
-├── tailwind.config.ts  # Tailwind CSS configuration file
-└── README.md           # You are here
-```
+-   **Framework**: [Next.js](https://nextjs.org/) (with App Router)
+-   **Backend & Database**: [Firebase](https://firebase.google.com/) (Authentication, Firestore)
+-   **Styling**: [Tailwind CSS](https://tailwindcss.com/)
+-   **UI Components**: [ShadCN UI](https://ui.shadcn.com/)
+-   **Icons**: [Lucide React](https://lucide.dev/)
+-   **Forms**: [React Hook Form](https://react-hook-form.com/) & [Zod](https://zod.dev/)
+-   **Charts**: [Recharts](https://recharts.org/)
+-   **AI (Optional)**: [Genkit](https://firebase.google.com/docs/genkit)
 
 ## Getting Started
 
-Follow these instructions to get a local copy of {AppName} up and running on your machine.
+Here’s the quick setup to get SplitIt running locally.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18 or later recommended)
-- [npm](https://www.npmjs.com/get-npm) or [yarn](https://yarnpkg.com/)
-- A [Firebase](https://firebase.google.com/) account (free "Spark" plan is sufficient)
-- [Firebase CLI](https://firebase.google.com/docs/cli) installed and authenticated (`npm install -g firebase-tools` and `firebase login`)
+-   [Node.js](https://nodejs.org/) (v18 or later recommended)
+-   A [Firebase](https://firebase.google.com/) account (the free "Spark" plan is sufficient)
+-   [Firebase CLI](https://firebase.google.com/docs/cli) installed and authenticated (`npm install -g firebase-tools` and `firebase login`)
 
 ### Firebase Project Setup
 
 1.  **Create a Firebase Project**:
-    - Go to the [Firebase Console](https://console.firebase.google.com/).
-    - Click "Add project" and follow the on-screen instructions.
+    -   Go to the [Firebase Console](https://console.firebase.google.com/).
+    -   Click "Add project" and follow the on-screen instructions.
 
 2.  **Register a Web App**:
-    - In your project's dashboard, click the web icon (`</>`) to add a new web app.
-    - Give it a nickname (e.g., "{AppName} Web") and click "Register app".
-    - You will be shown your Firebase configuration credentials. Copy these, as you'll need them for the `.env` file.
+    -   In your project's dashboard, click the web icon (`</>`) to add a new web app.
+    -   Give it a nickname (e.g., "SplitIt Web") and register the app.
+    -   After registration, Firebase will show you a configuration object. Copy these credentials.
 
 3.  **Enable Authentication Methods**:
-    - In the Firebase Console, go to **Build > Authentication** > **Sign-in method**.
-    - Enable both **Email/Password** and **Google** providers.
+    -   In the Firebase Console, go to **Build > Authentication** > **Sign-in method**.
+    -   Enable both **Email/Password** and **Google** providers.
 
 4.  **Set up Firestore Database**:
-    - Go to **Build > Firestore Database** > **Create database**.
-    - Start in **production mode**. This is important for the security rules to work correctly.
-    - Choose a location for your database.
+    -   Go to **Build > Firestore Database** > **Create database**.
+    -   Start in **production mode**. This is crucial for security rules to work correctly.
+    -   Choose a location for your database.
 
-### Local Installation
+### Local Installation & Setup
 
-1.  **Clone the Repository** (or use your existing project directory):
+1.  **Clone the Repository**:
     ```bash
-    git clone https://github.com/your-username/settleease.git
+    git clone https://github.com/Yashraj-Jangra/SplitIt-SplitWise_Clone.git
     cd settleease
     ```
 
@@ -156,8 +146,8 @@ Follow these instructions to get a local copy of {AppName} up and running on you
     ```
 
 3.  **Create Environment File**:
-    - Create a file named `.env` in the root of your project.
-    - Copy your Firebase web app configuration from the setup step into this file:
+    -   Create a file named `.env` in the root of your project.
+    -   Copy your Firebase web app configuration into this file. These keys are safe to expose on the client-side.
     ```env
     NEXT_PUBLIC_FIREBASE_API_KEY=AIza...
     NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
@@ -167,57 +157,50 @@ Follow these instructions to get a local copy of {AppName} up and running on you
     NEXT_PUBLIC_FIREBASE_APP_ID=1:123...:web:...
     ```
 
-4.  **Connect to your Firebase Project**:
-    - In your terminal, run the following command and select the Firebase project you created.
+4.  **Connect to Your Firebase Project**:
+    -   Link your local project to the Firebase project you created.
     ```bash
     firebase use --add
     ```
 
-## Running the Application
-
--   **Start the development server**:
+5.  **Run the Development Server**:
     ```bash
     npm run dev
     ```
     The application will be available at `http://localhost:3231`.
 
--   **(Optional) Start the Genkit developer UI**:
-    If you plan to work on AI features, you can run the Genkit tools in a separate terminal:
-    ```bash
-    npm run genkit:dev
-    ```
-
-## Deploying Firebase Rules
-
-For the application to securely access the database, you must deploy the Firestore security rules.
-
-**Prerequisite**: Make sure you have the Firebase CLI installed and are logged in (`firebase login`).
-
-Run the following command from your terminal in the project's root directory:
-
-```bash
-firebase deploy --only firestore
-```
-
-This will upload the `firestore.rules` file to your Firebase project, fixing any "Missing or insufficient permissions" errors.
-
 ## Core Concepts
 
-### Groups
-- Groups are the core of {AppName}. All expenses are contained within a group.
-- You can create a new group and invite other registered users to join.
-- Each group has its own balance sheet, expense log, and history.
+-   **Groups**: Think of this as a container for shared activities. It has members, expenses, and eventually settlements. Everything revolves around groups.
+-   **Expenses**: A single cost that someone paid for. The cool part? You can split it between people in tons of different ways.
+-   **Settlements**: When person A pays person B to clear a debt. Our debt simplification algorithm figures out the most efficient way to settle everyone's debts.
 
-### Expenses
-- Expenses can be added to any group you are a member of.
-- The app supports complex splits:
-  - **Equally**: Split the cost evenly among selected participants.
-  - **Unequally**: Manually enter the amount each person owes.
-  - **By Shares**: Assign shares to participants (e.g., person A pays for 2 shares, person B for 1).
-  - **By Percentage**: Assign a percentage of the total cost to each participant.
-- Multiple members can be marked as payers for a single expense.
+## Project Structure
 
-### Settlements
-- When you are ready to pay someone back or get paid, you can record a settlement.
-- The "Balances" tab in a group shows a detailed breakdown of who owes whom.
-- You can use the "Simplify Debts" feature to find the most efficient way to clear all debts in the group.
+This project uses the Next.js App Router and a feature-based folder structure.
+
+```
+/
+├── src/
+│   ├── app/            # Next.js App Router: layouts, pages, and loading states
+│   │   ├── (app)/      # Authenticated application routes (dashboard, groups)
+│   │   ├── (admin)/    # Admin panel routes
+│   │   ├── (auth)/     # Authentication pages (login, signup)
+│   │   ├── api/        # API routes for server-side logic
+│   │   └── ...
+│   ├── components/
+│   │   ├── auth/       # Authentication-related forms and components
+│   │   ├── dashboard/  # Dashboard-specific components and cards
+│   │   ├── expenses/   # Expense forms, list items, and dialogs
+│   │   ├── groups/     # Group management components
+│   │   ├── layout/     # Core layout components (App shell, sidebar, header)
+│   │   └── ui/         # Reusable UI components from ShadCN
+│   ├── contexts/       # React context providers for global state
+│   ├── firebase/       # Firebase configuration and custom error handling
+│   ├── hooks/          # Custom React hooks
+│   ├── lib/            # Core libraries, utilities, and data fetching logic
+│   └── types/          # TypeScript type definitions
+├── firebase.json       # Firebase deployment configuration
+├── firestore.rules     # Firestore security rules
+└── README.md           # You are here!
+```
