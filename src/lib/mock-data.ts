@@ -1,0 +1,1652 @@
+
+
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  Timestamp,
+  writeBatch,
+  arrayUnion,
+  arrayRemove,
+  documentId,
+  orderBy,
+  setDoc,
+} from 'firebase/firestore';
+import { db, auth } from './firebase';
+import type {
+  UserProfile,
+  Group,
+  GroupDocument,
+  Expense,
+  ExpenseDocument,
+  Settlement,
+  SettlementDocument,
+  Balance,
+  ExpenseParticipant,
+  ExpensePayer,
+  HistoryEvent,
+  HistoryEventDocument,
+  SiteSettings,
+  SimplifiedSettlement,
+  PolicyPage,
+  TeamMember,
+  LandingPageFeature,
+  LandingPageStep,
+  CountryCode,
+  EmailTemplate,
+  SupportTicket,
+  SupportTicketDocument,
+  SupportTicketMessage,
+  Theme,
+  ExpenseCategory,
+  MasterCategory,
+  Notification,
+  NotificationDocument,
+} from '@/types';
+import { getFullName } from './utils';
+import { CURRENCY_SYMBOL } from './constants';
+import { format } from 'date-fns';
+import { defaultExpenseCategories, getMasterCategory } from './expense-categories';
+import { BASE_THEMES } from '@/themes';
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+
+// --- User Functions ---
+
+export async function isUsernameTaken(username: string, excludeUserId?: string): Promise<boolean> {
+    const normalizedUsername = username.toLowerCase();
+    const q = query(collection(db, 'users'), where('username', '==', normalizedUsername));
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+        return false;
+    }
+    
+    // If we are checking for an update, we need to see if the found username belongs to a different user
+    if (excludeUserId) {
+        return querySnapshot.docs.some(doc => doc.id !== excludeUserId);
+    }
+    
+    return !querySnapshot.empty;
+}
+
+export async function getUserProfile(uid: string): Promise<UserProfile | null> {
+  const docRef = doc(db, 'users', uid);
+  const docSnap = await getDoc(docRef);
+  if (docSnap.exists()) {
+    const data = docSnap.data();
+    return { 
+        ...data, 
+        uid: docSnap.id, 
+        createdAt: (data.createdAt as Timestamp)?.toDate().toISOString(),
+        dob: data.dob ? (data.dob as Timestamp)?.toDate().toISOString() : undefined
+    } as UserProfile;
+  }
+  return null;
+}
+
+export async function getAllUsers(): Promise<UserProfile[]> {
+  const usersCol = collection(db, 'users');
+  const userSnapshot = await getDocs(usersCol);
+  return userSnapshot.docs.map(doc => {
+      const data = doc.data();
+      return { 
+          ...data,
+          uid: doc.id, 
+          createdAt: (data.createdAt as Timestamp)?.toDate().toISOString(),
+          dob: data.dob ? (data.dob as Timestamp)?.toDate().toISOString() : undefined
+      } as UserProfile
+  });
+}
+
+export async function updateUser(userId: string, data: Partial<UserProfile>): Promise<UserProfile> {
+    if (data.username) {
+        const taken = await isUsernameTaken(data.username, userId);
+        if (taken) {
+            throw new Error("Username is already taken.");
+        }
+    }
+    
+    const userDocRef = doc(db, "users", userId);
+    const updateData: { [key: string]: any } = { ...data };
+
+    if (data.dob) {
+        updateData.dob = Timestamp.fromDate(new Date(data.dob));
+    }
+
+    // Firestore doesn't like `undefined` values.
+    const cleanUpdateData = Object.fromEntries(Object.entries(updateData).filter(([_, v]) => v !== undefined));
+
+    await updateDoc(userDocRef, cleanUpdateData);
+    const updatedUser = await getUserProfile(userId);
+    if (!updatedUser) throw new Error("Failed to fetch updated user");
+    return updatedUser;
+}
+
+// --- Hydration / Joining Functions ---
+
+export async function hydrateUsers(uids: string[]): Promise<UserProfile[]> {
+    if (uids.length === 0) return [];
+    
+    const uniqueUids = [...new Set(uids)];
+    if (uniqueUids.length === 0) return [];
+    
+    const chunks: string[][] = [];
+    for (let i = 0; i < uniqueUids.length; i += 30) {
+        chunks.push(uniqueUids.slice(i, i + 30));
+    }
+
+    const userPromises = chunks.map(async (chunk) => {
+         const usersQuery = query(collection(db, 'users'), where(documentId(), 'in', chunk));
+         const querySnapshot = await getDocs(usersQuery);
+         return querySnapshot.docs.map(doc => {
+            const data = doc.data();
+            return { 
+                ...data, 
+                uid: doc.id,
+                createdAt: (data.createdAt as Timestamp)?.toDate().toISOString(),
+                dob: data.dob ? (data.dob as Timestamp)?.toDate().toISOString() : undefined
+            } as UserProfile
+         });
+    });
+
+    const results = await Promise.all(userPromises);
+    return results.flat();
+}
+
+// --- Group Functions ---
+
+export async function createGroup(groupData: Omit<GroupDocument, 'createdAt' | 'totalExpenses' | 'groupCreatorId'>): Promise<string> {
+    const docRef = await addDoc(collection(db, 'groups'), {
+        ...groupData,
+        groupCreatorId: groupData.createdById,
+        totalExpenses: 0,
+        createdAt: Timestamp.now(),
+        archivedAt: null,
+    });
+    return docRef.id;
+}
+
+export async function getGroupById(groupId: string): Promise<Group | null> {
+    const groupDocRef = doc(db, "groups", groupId);
+    const groupSnap = await getDoc(groupDocRef);
+
+    if (!groupSnap.exists()) return null;
+
+    const groupData = groupSnap.data() as GroupDocument;
+    
+    const [members, createdBy] = await Promise.all([
+        hydrateUsers(groupData.memberIds),
+        getUserProfile(groupData.createdById)
+    ]);
+
+    if (!createdBy) throw new Error("Created by user not found for group");
+
+    return {
+        ...groupData,
+        id: groupSnap.id,
+        createdAt: (groupData.createdAt as Timestamp).toDate().toISOString(),
+        archivedAt: (groupData.archivedAt as Timestamp)?.toDate().toISOString() || undefined,
+        members,
+        createdBy,
+    };
+}
+
+export async function getGroupsByUserId(userId: string): Promise<Group[]> {
+    const q = query(
+        collection(db, 'groups'), 
+        where('memberIds', 'array-contains', userId),
+        where('archivedAt', '==', null)
+    );
+    const querySnapshot = await getDocs(q);
+
+    const groups: Group[] = await Promise.all(
+        querySnapshot.docs.map(async (docSnap) => {
+            const groupData = docSnap.data() as GroupDocument;
+             const [members, createdBy] = await Promise.all([
+                hydrateUsers(groupData.memberIds),
+                getUserProfile(groupData.createdById)
+            ]);
+            if (!createdBy) return null; // Should not happen
+            return {
+                ...groupData,
+                id: docSnap.id,
+                createdAt: (groupData.createdAt as Timestamp).toDate().toISOString(),
+                archivedAt: (groupData.archivedAt as Timestamp)?.toDate().toISOString() || undefined,
+                members,
+                createdBy
+            }
+        })
+    );
+    return groups.filter((g): g is Group => g !== null).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+export async function getAllGroups(): Promise<Group[]> {
+    const groupsCol = collection(db, 'groups');
+    const groupSnapshot = await getDocs(groupsCol);
+    
+    const allUserIds = new Set<string>();
+    const groupDocs = groupSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as GroupDocument & {id: string}));
+    groupDocs.forEach(g => {
+        allUserIds.add(g.createdById);
+        g.memberIds.forEach(mid => allUserIds.add(mid));
+    });
+    const allUsers = await hydrateUsers(Array.from(allUserIds));
+    const userMap = new Map(allUsers.map(u => [u.uid, u]));
+
+    const groups: Group[] = groupDocs.map((groupData) => {
+            const createdBy = userMap.get(groupData.createdById);
+            if (!createdBy) return null;
+            const members = groupData.memberIds.map(id => userMap.get(id)).filter(u => u) as UserProfile[];
+
+            return {
+                ...groupData,
+                id: groupData.id,
+                createdAt: (groupData.createdAt as Timestamp).toDate().toISOString(),
+                archivedAt: (groupData.archivedAt as Timestamp)?.toDate().toISOString() || undefined,
+                members,
+                createdBy
+            }
+        });
+    return groups.filter((g): g is Group => g !== null);
+}
+
+export async function addMembersToGroup(groupId: string, memberIds: string[], actorId: string): Promise<void> {
+    const groupDocRef = doc(db, 'groups', groupId);
+    await updateDoc(groupDocRef, {
+        memberIds: arrayUnion(...memberIds)
+    });
+    
+    const [actor, newMembers] = await Promise.all([
+        getUserProfile(actorId),
+        hydrateUsers(memberIds)
+    ]);
+    const actorName = getFullName(actor?.firstName, actor?.lastName);
+    const newMemberNames = newMembers.map(m => getFullName(m.firstName, m.lastName)).join(', ');
+    const description = `${actorName} added ${newMemberNames} to the group.`;
+    await logHistoryEvent(groupId, 'member_added', actorId, description, { memberIds });
+}
+
+export async function archiveGroup(groupId: string, actorId: string): Promise<void> {
+    const groupDocRef = doc(db, 'groups', groupId);
+    await updateDoc(groupDocRef, {
+        archivedAt: Timestamp.now()
+    });
+    
+    const actor = await getUserProfile(actorId);
+    const actorName = getFullName(actor?.firstName, actor?.lastName);
+    const description = `${actorName} archived the group.`;
+    await logHistoryEvent(groupId, 'group_updated', actorId, description, { changes: [{ field: 'Status', from: 'Active', to: 'Archived' }] });
+}
+
+export async function restoreGroup(groupId: string, actorId: string): Promise<void> {
+    const groupDocRef = doc(db, 'groups', groupId);
+    await updateDoc(groupDocRef, {
+        archivedAt: null
+    });
+    
+    const actor = await getUserProfile(actorId);
+    const actorName = getFullName(actor?.firstName, actor?.lastName);
+    const description = `${actorName} restored the group.`;
+    await logHistoryEvent(groupId, 'group_updated', actorId, description, { changes: [{ field: 'Status', from: 'Archived', to: 'Active' }] });
+}
+
+
+export async function updateGroup(groupId: string, data: Partial<GroupDocument>, actorId: string): Promise<void> {
+    const groupDocRef = doc(db, 'groups', groupId);
+    
+    const groupSnap = await getDoc(groupDocRef);
+    if (!groupSnap.exists()) {
+        throw new Error("Group not found.");
+    }
+    const oldData = groupSnap.data() as GroupDocument;
+
+    const cleanData = Object.fromEntries(Object.entries(data).filter(([_, v]) => v !== undefined));
+    await updateDoc(groupDocRef, cleanData);
+
+    // Now, check for changes and log history
+    const actor = await getUserProfile(actorId);
+    const actorName = getFullName(actor?.firstName, actor?.lastName);
+
+    const changes: { field: string; from: any; to: any }[] = [];
+    
+    if (data.name && data.name !== oldData.name) {
+        changes.push({ field: 'Name', from: `"${oldData.name}"`, to: `"${data.name}"` });
+    }
+    if (data.description !== undefined && data.description !== (oldData.description || '')) {
+         changes.push({ field: 'Description', from: `"${oldData.description || ''}"`, to: `"${data.description || ''}"` });
+    }
+    if (data.coverImageUrl && data.coverImageUrl !== oldData.coverImageUrl) {
+        // Just log that it changed, not the URLs, to keep the log clean.
+        changes.push({ field: 'Cover Image', from: 'updated', to: '' });
+    }
+
+    if (changes.length > 0) {
+        const changeSummary = changes.map(c => c.field.toLowerCase()).join(', ');
+        const description = `${actorName} updated the group ${changeSummary}.`;
+        await logHistoryEvent(groupId, 'group_updated', actorId, description, { changes });
+    }
+}
+
+export async function removeMemberFromGroup(groupId: string, memberIdToRemove: string, actorId: string): Promise<void> {
+    const groupDocRef = doc(db, 'groups', groupId);
+    
+    const [actor, memberToRemoveProfile, balances] = await Promise.all([
+        getUserProfile(actorId),
+        getUserProfile(memberIdToRemove),
+        getGroupBalances(groupId),
+    ]);
+    
+    if (!actor || !memberToRemoveProfile) {
+        throw new Error("Could not find user profiles for this action.");
+    }
+    
+    const memberBalance = balances.find(b => b.user.uid === memberIdToRemove)?.netBalance || 0;
+    
+    if (Math.abs(memberBalance) > 0.01) {
+        throw new Error(`${getFullName(memberToRemoveProfile.firstName, memberToRemoveProfile.lastName)} has an outstanding balance of ${CURRENCY_SYMBOL}${Math.abs(memberBalance).toFixed(2)} and cannot be removed. Please settle all debts first.`);
+    }
+
+    const actorName = getFullName(actor.firstName, actor.lastName);
+    const memberName = getFullName(memberToRemoveProfile.firstName, memberToRemoveProfile.lastName);
+    const description = `${actorName} removed ${memberName} from the group.`;
+    
+    // Log history before making the change
+    await logHistoryEvent(groupId, 'member_removed', actorId, description, { removedMemberId: memberIdToRemove });
+
+    // Update the group document
+    await updateDoc(groupDocRef, {
+        memberIds: arrayRemove(memberIdToRemove)
+    });
+}
+
+
+// --- Expense Functions ---
+
+export async function addExpense(expenseData: Omit<ExpenseDocument, 'date' | 'participantIds' | 'payerIds' | 'groupMemberIds' | 'groupCreatorId' | 'expenseCreatorId' | 'masterCategory' | 'createdAt'> & { date: Date }, actorId: string): Promise<string> {
+    const groupDocRef = doc(db, 'groups', expenseData.groupId);
+    const groupSnap = await getDoc(groupDocRef);
+
+    if(!groupSnap.exists()){
+        throw new Error("Group not found to add expense.");
+    }
+    const groupData = groupSnap.data() as GroupDocument;
+    
+    const participantIds = expenseData.participants.map(p => p.userId);
+    const payerIds = expenseData.payers.map(p => p.userId);
+    
+    // Get master category
+    const siteSettings = await getSiteSettings();
+    const masterCategory = getMasterCategory(expenseData.category || 'Other', siteSettings.expenseCategories);
+
+    const newExpenseData = {
+        ...expenseData,
+        participantIds,
+        payerIds,
+        masterCategory,
+        groupMemberIds: groupData.memberIds,
+        groupCreatorId: groupData.createdById,
+        expenseCreatorId: actorId,
+        date: Timestamp.fromDate(expenseData.date),
+        createdAt: Timestamp.now(),
+    };
+    
+    const expensesCollectionRef = collection(db, 'expenses');
+    
+    try {
+        const docRef = await addDoc(expensesCollectionRef, newExpenseData);
+        
+        const currentTotal = groupSnap.data().totalExpenses || 0;
+        await updateDoc(groupDocRef, {
+            totalExpenses: currentTotal + expenseData.amount
+        });
+        
+        const actor = await getUserProfile(actorId);
+        const actorName = getFullName(actor?.firstName, actor?.lastName);
+        const description = `${actorName} added expense "${expenseData.description}" for ${CURRENCY_SYMBOL}${expenseData.amount.toFixed(2)}.`;
+        await logHistoryEvent(expenseData.groupId, 'expense_created', actorId, description, { expenseId: docRef.id, date: expenseData.date });
+
+        return docRef.id;
+    } catch (serverError) {
+         const permissionError = new FirestorePermissionError({
+            path: expensesCollectionRef.path,
+            operation: 'create',
+            requestResourceData: newExpenseData,
+        } satisfies SecurityRuleContext);
+        errorEmitter.emit('permission-error', permissionError);
+        // Re-throw original error to be caught by UI
+        throw serverError;
+    }
+}
+
+
+export async function updateExpense(expenseId: string, oldAmount: number, expenseData: Omit<ExpenseDocument, 'date' | 'participantIds' | 'payerIds' | 'groupMemberIds' | 'createdAt' | 'masterCategory'> & { date: Date; createdAt: string }, actorId: string): Promise<void> {
+    const expenseDocRef = doc(db, 'expenses', expenseId);
+    const expenseSnap = await getDoc(expenseDocRef);
+    const oldData = expenseSnap.exists() ? expenseSnap.data() as ExpenseDocument : null;
+
+    const groupDocRef = doc(db, 'groups', expenseData.groupId);
+    const groupSnap = await getDoc(groupDocRef);
+    if(!groupSnap.exists()){
+        throw new Error("Group not found to update expense.");
+    }
+    const groupData = groupSnap.data() as GroupDocument;
+
+    const participantIds = expenseData.participants.map(p => p.userId);
+    const payerIds = expenseData.payers.map(p => p.userId);
+    
+    const siteSettings = await getSiteSettings();
+    const masterCategory = getMasterCategory(expenseData.category || 'Other', siteSettings.expenseCategories);
+    
+    const dataToUpdate: any = {
+        ...expenseData,
+        participantIds,
+        payerIds,
+        masterCategory,
+        groupMemberIds: groupData.memberIds,
+        groupCreatorId: groupData.createdById, 
+        expenseCreatorId: oldData?.expenseCreatorId || actorId, 
+        date: Timestamp.fromDate(expenseData.date),
+        createdAt: oldData?.createdAt ? oldData.createdAt : Timestamp.fromMillis(Date.parse(expenseData.createdAt)),
+    };
+    
+    try {
+        await updateDoc(expenseDocRef, dataToUpdate);
+
+        const currentTotal = groupSnap.data().totalExpenses || 0;
+        const newTotal = currentTotal - oldAmount + expenseData.amount;
+        await updateDoc(groupDocRef, {
+            totalExpenses: newTotal
+        });
+
+        // ... history logging ...
+        const actor = await getUserProfile(actorId);
+        const actorName = getFullName(actor?.firstName, actor?.lastName);
+        
+        const changes: { field: string; from: any; to: any }[] = [];
+        const changeSummaries: string[] = [];
+
+        if (oldData) {
+            const oldDate = (oldData.date as Timestamp).toDate();
+
+            if (oldData.description !== expenseData.description) {
+                changes.push({ field: 'Description', from: `"${oldData.description}"`, to: `"${expenseData.description}"` });
+                changeSummaries.push('description');
+            }
+            if (oldData.amount !== expenseData.amount) {
+                changes.push({ field: 'Amount', from: `${CURRENCY_SYMBOL}${oldData.amount.toFixed(2)}`, to: `${CURRENCY_SYMBOL}${expenseData.amount.toFixed(2)}` });
+                changeSummaries.push('amount');
+            }
+            if (oldDate.toISOString().split('T')[0] !== expenseData.date.toISOString().split('T')[0]) {
+                changes.push({ field: 'Date', from: format(oldDate, 'PPP'), to: format(expenseData.date, 'PPP') });
+                changeSummaries.push('date');
+            }
+            if ((oldData.category || 'Other') !== (expenseData.category || 'Other')) {
+                changes.push({ field: 'Category', from: `"${oldData.category || 'Other'}"`, to: `"${expenseData.category || 'Other'}"` });
+                changeSummaries.push('category');
+            }
+            if (oldData.splitType !== expenseData.splitType) {
+                 changes.push({ field: 'Split Method', from: `"${oldData.splitType}"`, to: `"${expenseData.splitType}"` });
+                 changeSummaries.push('split method');
+            }
+            if (oldData.notes !== expenseData.notes) {
+              changes.push({ field: 'Notes', from: `"${oldData.notes || ''}"`, to: `"${expenseData.notes || ''}"` });
+              changeSummaries.push('notes');
+            }
+
+            const oldPayersStr = JSON.stringify(oldData.payers.sort((a,b) => a.userId.localeCompare(b.userId)));
+            const newPayersStr = JSON.stringify(expenseData.payers.sort((a,b) => a.userId.localeCompare(b.userId)));
+            if (oldPayersStr !== newPayersStr) {
+                changes.push({ field: 'Payers', from: 'List of payers was updated.', to: '' });
+                changeSummaries.push('payers');
+            }
+            
+            const oldParticipantsStr = JSON.stringify(oldData.participants.sort((a,b) => a.userId.localeCompare(b.userId)));
+            const newParticipantsStr = JSON.stringify(expenseData.participants.sort((a,b) => a.userId.localeCompare(b.userId)));
+            if (oldParticipantsStr !== newParticipantsStr) {
+                changes.push({ field: 'Split', from: 'Participant split was updated.', to: '' });
+                changeSummaries.push('participant split');
+            }
+        }
+
+        let description: string;
+        if (changeSummaries.length > 0) {
+            const uniqueSummaries = [...new Set(changeSummaries)];
+            const summaryText = uniqueSummaries.length > 2
+                ? `${uniqueSummaries.slice(0, 2).join(', ')} and other details`
+                : uniqueSummaries.join(' and ');
+            description = `${actorName} updated the ${summaryText} for expense "${oldData?.description}".`;
+        } else {
+            description = `${actorName} re-saved expense "${oldData?.description}" with no changes.`;
+        }
+        
+        await logHistoryEvent(expenseData.groupId, 'expense_updated', actorId, description, {
+            expenseId,
+            changes,
+            date: expenseData.date,
+        });
+
+    } catch (serverError) {
+        const permissionError = new FirestorePermissionError({
+            path: expenseDocRef.path,
+            operation: 'update',
+            requestResourceData: dataToUpdate,
+        } satisfies SecurityRuleContext);
+        errorEmitter.emit('permission-error', permissionError);
+        throw serverError;
+    }
+}
+
+export async function deleteExpense(expenseId: string, groupId: string, amount: number, actorId: string): Promise<void> {
+    const expenseDocRef = doc(db, 'expenses', expenseId);
+    const expenseSnap = await getDoc(expenseDocRef);
+
+    if (!expenseSnap.exists()) return;
+    const deletedExpenseData = expenseSnap.data();
+
+    const batch = writeBatch(db);
+
+    const groupDocRef = doc(db, 'groups', groupId);
+    const groupSnap = await getDoc(groupDocRef);
+    if (groupSnap.exists()) {
+        const currentTotal = groupSnap.data().totalExpenses || 0;
+        const newTotal = currentTotal - amount;
+        batch.update(groupDocRef, { totalExpenses: newTotal < 0 ? 0 : newTotal });
+    }
+
+    batch.delete(expenseDocRef);
+
+    await batch.commit();
+
+    const actor = await getUserProfile(actorId);
+    const actorName = getFullName(actor?.firstName, actor?.lastName);
+    const description = `${actorName} deleted expense "${deletedExpenseData.description}" (was ${CURRENCY_SYMBOL}${amount.toFixed(2)}).`;
+
+    // Ensure payerIds exists for restoration
+    if (!deletedExpenseData.payerIds && deletedExpenseData.payers) {
+        deletedExpenseData.payerIds = deletedExpenseData.payers.map((p: ExpensePayer) => p.user.uid);
+    }
+    
+    await logHistoryEvent(groupId, 'expense_deleted', actorId, description, { ...deletedExpenseData, expenseId: expenseId, date: (deletedExpenseData.date as Timestamp)?.toDate() });
+}
+
+
+export async function getExpensesByGroupId(groupId: string): Promise<Expense[]> {
+    const user = auth.currentUser;
+    if (!user) return [];
+
+    const profile = await getUserProfile(user.uid);
+    const isAdmin = profile?.role === 'admin';
+
+    let q;
+    if (isAdmin) {
+        // Admins can see all expenses in any group
+        q = query(collection(db, 'expenses'), where('groupId', '==', groupId));
+    } else {
+        // Regular users can only see expenses in groups they are members of
+        q = query(
+            collection(db, 'expenses'), 
+            where('groupId', '==', groupId), 
+            where('groupMemberIds', 'array-contains', user.uid)
+        );
+    }
+    
+    const querySnapshot = await getDocs(q);
+
+    const expenses: Expense[] = await Promise.all(
+        querySnapshot.docs.map(async (docSnap) => {
+            const expenseData = docSnap.data() as ExpenseDocument;
+            const userIds = [
+                expenseData.expenseCreatorId,
+                ...(expenseData.payers || []).map(p => p.userId), 
+                ...(expenseData.participants || []).map(p => p.userId)
+            ];
+            const uniqueUserIds = [...new Set(userIds)];
+            const users = await hydrateUsers(uniqueUserIds);
+            const userMap = new Map(users.map(u => [u.uid, u]));
+            
+            const payers = (expenseData.payers || []).map(p => {
+                const user = userMap.get(p.userId);
+                return user ? { ...p, user } : null;
+            }).filter((p): p is ExpensePayer => p !== null);
+            
+            const participants = (expenseData.participants || []).map(p => {
+                const user = userMap.get(p.userId);
+                return user ? { ...p, user } : null;
+            }).filter((p): p is ExpenseParticipant => p !== null);
+
+            const expenseCreator = userMap.get(expenseData.expenseCreatorId);
+            if (!expenseCreator) return null; // Should not happen
+
+            return {
+                ...expenseData,
+                id: docSnap.id,
+                date: (expenseData.date as Timestamp).toDate().toISOString(),
+                createdAt: (expenseData.createdAt as Timestamp)?.toDate().toISOString(),
+                payers,
+                participants,
+                expenseCreator,
+            }
+        })
+    );
+     return expenses.filter((e): e is Expense => e !== null);
+}
+
+export async function getExpensesByUserId(userId: string): Promise<Expense[]> {
+  const expensesRef = collection(db, 'expenses');
+  
+  // This is a secure query, as security rules can check if `userId` is in `groupMemberIds`.
+  const memberQuery = query(expensesRef, where('groupMemberIds', 'array-contains', userId));
+  
+  const memberSnapshot = await getDocs(memberQuery);
+  
+  const expenseMap = new Map<string, ExpenseDocument>();
+
+  // Now, we filter client-side. The permission error happens during the `getDocs` call,
+  // so by the time we get here, we have a set of documents we are allowed to read.
+  memberSnapshot.docs.forEach(doc => {
+      const expenseData = doc.data() as ExpenseDocument;
+      // We only want expenses where the user was actually a payer or participant.
+      const isParticipant = expenseData.participantIds?.includes(userId);
+      const isPayer = expenseData.payerIds?.includes(userId);
+      if (isParticipant || isPayer) {
+          expenseMap.set(doc.id, expenseData);
+      }
+  });
+
+  const expenses: Expense[] = await Promise.all(
+    Array.from(expenseMap.entries()).map(async ([id, expenseData]) => {
+        const userIds = [
+            expenseData.expenseCreatorId,
+            ...(expenseData.payers || []).map(p => p.userId), 
+            ...(expenseData.participants || []).map(p => p.userId)
+        ];
+        const uniqueUserIds = [...new Set(userIds)];
+        const users = await hydrateUsers(uniqueUserIds);
+        const userMap = new Map(users.map(u => [u.uid, u]));
+
+        const payers = (expenseData.payers || []).map(p => {
+                const user = userMap.get(p.userId);
+                return user ? { ...p, user } : null;
+            }).filter((p): p is ExpensePayer => p !== null);
+        
+        const participants = (expenseData.participants || []).map((p) => {
+            const user = userMap.get(p.userId);
+            return user ? { ...p, user } : null;
+        }).filter((p): p is ExpenseParticipant => p !== null);
+        
+        const expenseCreator = userMap.get(expenseData.expenseCreatorId);
+        if (!expenseCreator) return null;
+
+        return {
+            ...expenseData,
+            id: id,
+            date: (expenseData.date as Timestamp).toDate().toISOString(),
+            createdAt: (expenseData.createdAt as Timestamp)?.toDate().toISOString(),
+            payers,
+            participants,
+            expenseCreator,
+        }
+    })
+  );
+  return expenses.filter((e): e is Expense => e !== null);
+}
+
+export async function getAllExpenses(): Promise<Expense[]> {
+  const expensesCol = collection(db, 'expenses');
+  const expenseSnapshot = await getDocs(expensesCol);
+
+  const allUserIds = new Set<string>();
+  const expenseDocs = expenseSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ExpenseDocument & {id: string}));
+  
+  expenseDocs.forEach(expense => {
+    allUserIds.add(expense.expenseCreatorId);
+    (expense.payers || []).forEach(p => allUserIds.add(p.userId));
+    (expense.participants || []).forEach(p => allUserIds.add(p.userId));
+  });
+
+  const allUsers = await hydrateUsers(Array.from(allUserIds));
+  const userMap = new Map(allUsers.map(u => [u.uid, u]));
+
+  const expenses: Expense[] = expenseDocs.map((expenseData) => {
+      const payers = (expenseData.payers || []).map(p => {
+          const user = userMap.get(p.userId);
+          return user ? { ...p, user } : null;
+      }).filter((p): p is ExpensePayer => p !== null);
+
+      const participants = (expenseData.participants || []).map(p => {
+          const user = userMap.get(p.userId);
+          return user ? { ...p, user } : null;
+      }).filter((p): p is ExpenseParticipant => p !== null);
+
+      const expenseCreator = userMap.get(expenseData.expenseCreatorId);
+      if (!expenseCreator) return null;
+
+      return {
+          ...expenseData,
+          id: expenseData.id,
+          date: (expenseData.date as Timestamp).toDate().toISOString(),
+          createdAt: (expenseData.createdAt as Timestamp)?.toDate().toISOString(),
+          payers,
+          participants,
+          expenseCreator,
+      }
+  }).filter((e): e is Expense => e !== null);
+  
+  return expenses;
+}
+
+
+// --- Settlement Functions ---
+
+export async function addSettlement(settlementData: Omit<SettlementDocument, 'date' | 'groupMemberIds'> & { date: Date }, actorId: string): Promise<string> {
+    const groupDocRef = doc(db, 'groups', settlementData.groupId);
+    const groupSnap = await getDoc(groupDocRef);
+    if (!groupSnap.exists()) {
+        throw new Error("Group not found to add settlement.");
+    }
+    const groupData = groupSnap.data() as GroupDocument;
+    
+    const docRef = await addDoc(collection(db, 'settlements'), {
+        ...settlementData,
+        groupMemberIds: groupData.memberIds,
+        date: Timestamp.fromDate(settlementData.date),
+    });
+    
+    const [actor, paidBy, paidTo] = await Promise.all([
+        getUserProfile(actorId),
+        getUserProfile(settlementData.paidById),
+        getUserProfile(settlementData.paidToId),
+    ]);
+    const actorName = getFullName(actor?.firstName, actor?.lastName);
+    const paidByName = getFullName(paidBy?.firstName, paidBy?.lastName);
+    const paidToName = getFullName(paidTo?.firstName, paidTo?.lastName);
+
+    const description = `${actorName} recorded a settlement: ${paidByName} paid ${paidToName} ${CURRENCY_SYMBOL}${settlementData.amount.toFixed(2)}.`;
+    await logHistoryEvent(settlementData.groupId, 'settlement_created', actorId, description, { settlementId: docRef.id, date: settlementData.date });
+
+    return docRef.id;
+}
+
+
+export async function getSettlementsByGroupId(groupId: string): Promise<Settlement[]> {
+    const user = auth.currentUser;
+    if (!user) return [];
+
+    const profile = await getUserProfile(user.uid);
+    const isAdmin = profile?.role === 'admin';
+
+    let q;
+    if (isAdmin) {
+        q = query(collection(db, 'settlements'), where('groupId', '==', groupId));
+    } else {
+        q = query(
+            collection(db, 'settlements'), 
+            where('groupId', '==', groupId), 
+            where('groupMemberIds', 'array-contains', user.uid)
+        );
+    }
+    
+    const querySnapshot = await getDocs(q);
+    
+    const userIds = new Set<string>();
+    querySnapshot.docs.forEach(doc => {
+        const data = doc.data() as SettlementDocument;
+        userIds.add(data.paidById);
+        userIds.add(data.paidToId);
+    });
+    const users = await hydrateUsers(Array.from(userIds));
+    const userMap = new Map(users.map(u => [u.uid, u]));
+
+    const settlements: Settlement[] = querySnapshot.docs.map((docSnap) => {
+            const settlementData = docSnap.data() as SettlementDocument;
+            const paidBy = userMap.get(settlementData.paidById);
+            const paidTo = userMap.get(settlementData.paidToId);
+
+            if (!paidBy || !paidTo) return null;
+            return {
+                ...settlementData,
+                id: docSnap.id,
+                date: (settlementData.date as Timestamp).toDate().toISOString(),
+                paidBy,
+                paidTo
+            };
+        }).filter((s): s is Settlement => s !== null);
+
+    return settlements;
+}
+
+export async function getSettlementsByUserId(userId: string): Promise<Settlement[]> {
+    const settlementsRef = collection(db, 'settlements');
+    const memberQuery = query(settlementsRef, where('groupMemberIds', 'array-contains', userId)); 
+
+    const memberSnapshot = await getDocs(memberQuery);
+    
+    const settlementMap = new Map<string, SettlementDocument>();
+    memberSnapshot.docs.forEach(doc => settlementMap.set(doc.id, doc.data() as SettlementDocument));
+
+    const allUserIds = new Set<string>();
+    settlementMap.forEach(s => {
+        allUserIds.add(s.paidById);
+        allUserIds.add(s.paidToId);
+    });
+
+    const allUsers = await hydrateUsers(Array.from(allUserIds));
+    const userMap = new Map(allUsers.map(u => [u.uid, u]));
+
+    const settlements: Settlement[] = Array.from(settlementMap.entries()).map(([id, settlementData]) => {
+        // Filter out settlements not directly involving the user
+        if (settlementData.paidById !== userId && settlementData.paidToId !== userId) {
+            return null;
+        }
+        
+        const paidBy = userMap.get(settlementData.paidById);
+        const paidTo = userMap.get(settlementData.paidToId);
+        if (!paidBy || !paidTo) return null;
+
+        return {
+            ...settlementData,
+            id: id,
+            date: (settlementData.date as Timestamp).toDate().toISOString(),
+            paidBy,
+            paidTo,
+        };
+    }).filter((s): s is Settlement => s !== null);
+
+    return settlements;
+}
+
+export async function getAllSettlements(): Promise<Settlement[]> {
+    const settlementsCol = collection(db, 'settlements');
+    const settlementSnapshot = await getDocs(settlementsCol);
+    
+    const allUserIds = new Set<string>();
+    const settlementDocs = settlementSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SettlementDocument & {id: string}));
+    settlementDocs.forEach(s => {
+        allUserIds.add(s.paidById);
+        allUserIds.add(s.paidToId);
+    });
+
+    const allUsers = await hydrateUsers(Array.from(allUserIds));
+    const userMap = new Map(allUsers.map(u => [u.uid, u]));
+
+    const settlements: Settlement[] = settlementDocs.map((settlementData) => {
+            const paidBy = userMap.get(settlementData.paidById);
+            const paidTo = userMap.get(settlementData.paidToId);
+            if (!paidBy || !paidTo) return null;
+
+            return {
+                ...settlementData,
+                id: settlementData.id,
+                date: (settlementData.date as Timestamp).toDate().toISOString(),
+                paidBy,
+                paidTo,
+            };
+        }).filter((s): s is Settlement => s !== null);
+
+    return settlements;
+}
+
+
+export async function updateSettlement(settlementId: string, data: Partial<SettlementDocument>, actorId: string): Promise<void> {
+    const settlementDocRef = doc(db, 'settlements', settlementId);
+    const settlementSnap = await getDoc(settlementDocRef);
+    if (!settlementSnap.exists()) {
+        throw new Error("Settlement not found.");
+    }
+    const oldData = settlementSnap.data() as SettlementDocument;
+
+    const cleanData = Object.fromEntries(Object.entries(data).filter(([_, v]) => v !== undefined));
+    
+    const updateData: {[key: string]: any} = { ...cleanData };
+    if (data.date) {
+      updateData.date = Timestamp.fromDate(new Date(data.date as any));
+    }
+
+    await updateDoc(settlementDocRef, updateData);
+
+    const [actor, newPaidBy, newPaidTo, oldPaidBy, oldPaidTo] = await Promise.all([
+        getUserProfile(actorId),
+        getUserProfile(data.paidById || oldData.paidById),
+        getUserProfile(data.paidToId || oldData.paidToId),
+        getUserProfile(oldData.paidById),
+        getUserProfile(oldData.paidToId),
+    ]);
+
+    const actorName = getFullName(actor?.firstName, actor?.lastName);
+    const changes: { field: string; from: any; to: any }[] = [];
+
+    if (data.amount !== undefined && data.amount !== oldData.amount) {
+        changes.push({ field: 'Amount', from: `${CURRENCY_SYMBOL}${oldData.amount.toFixed(2)}`, to: `${CURRENCY_SYMBOL}${data.amount.toFixed(2)}` });
+    }
+    if (data.paidById && data.paidById !== oldData.paidById) {
+        changes.push({ field: 'Payer', from: getFullName(oldPaidBy?.firstName, oldPaidBy?.lastName), to: getFullName(newPaidBy?.firstName, newPaidBy?.lastName) });
+    }
+    if (data.paidToId && data.paidToId !== oldData.paidToId) {
+        changes.push({ field: 'Recipient', from: getFullName(oldPaidTo?.firstName, oldPaidTo?.lastName), to: getFullName(newPaidTo?.firstName, newPaidTo?.lastName) });
+    }
+    if (data.date && (data.date as Date).toISOString().split('T')[0] !== (oldData.date.toDate()).toISOString().split('T')[0]) {
+        changes.push({ field: 'Date', from: format(oldData.date.toDate(), 'PPP'), to: format(data.date as Date, 'PPP') });
+    }
+    if (data.notes !== undefined && data.notes !== (oldData.notes || '')) {
+         changes.push({ field: 'Notes', from: `"${oldData.notes || ''}"`, to: `"${data.notes || ''}"` });
+    }
+    
+    const description = `${actorName} updated a settlement.`;
+    await logHistoryEvent(oldData.groupId, 'settlement_updated', actorId, description, { settlementId, changes, date: data.date || oldData.date.toDate() });
+}
+
+export async function deleteSettlement(settlementId: string, groupId: string, actorId:string): Promise<void> {
+    const settlementDocRef = doc(db, 'settlements', settlementId);
+    const settlementSnap = await getDoc(settlementDocRef);
+    if (!settlementSnap.exists()) return;
+    const deletedSettlementData = settlementSnap.data() as SettlementDocument;
+
+    await deleteDoc(settlementDocRef);
+
+    const [actor, paidBy, paidTo] = await Promise.all([
+        getUserProfile(actorId),
+        getUserProfile(deletedSettlementData.paidById),
+        getUserProfile(deletedSettlementData.paidToId),
+    ]);
+    const actorName = getFullName(actor?.firstName, actor?.lastName);
+    const paidByName = getFullName(paidBy?.firstName, paidBy?.lastName);
+    const paidToName = getFullName(paidTo?.firstName, paidTo?.lastName);
+    const description = `${actorName} deleted a settlement of ${CURRENCY_SYMBOL}${deletedSettlementData.amount.toFixed(2)} from ${paidByName} to ${paidToName}.`;
+    await logHistoryEvent(groupId, 'settlement_deleted', actorId, description, { ...deletedSettlementData, settlementId: settlementId, date: (deletedSettlementData.date as Timestamp)?.toDate() });
+}
+
+
+// --- Balance Calculation ---
+
+export async function getGroupBalances(groupId: string): Promise<Balance[]> {
+  const group = await getGroupById(groupId);
+  if (!group) return [];
+  const expenses = await getExpensesByGroupId(groupId);
+  const settlements = await getSettlementsByGroupId(groupId);
+
+  const memberBalances: Record<string, number> = {};
+  group.members.forEach(member => memberBalances[member.uid] = 0);
+
+  expenses.forEach(expense => {
+    expense.payers.forEach(payer => {
+        if(memberBalances[payer.user.uid] !== undefined) {
+            memberBalances[payer.user.uid] += payer.amount;
+        }
+    });
+    expense.participants.forEach(p => {
+      if(memberBalances[p.user.uid] !== undefined) {
+        memberBalances[p.user.uid] -= p.amountOwed;
+      }
+    });
+  });
+
+  settlements.forEach(settlement => {
+     if(memberBalances[settlement.paidBy.uid] !== undefined) {
+        memberBalances[settlement.paidBy.uid] += settlement.amount;
+    }
+    if(memberBalances[settlement.paidTo.uid] !== undefined) {
+        memberBalances[settlement.paidTo.uid] -= settlement.amount;
+    }
+  });
+  
+  return group.members.map(member => {
+    const netBalance = parseFloat((memberBalances[member.uid] || 0).toFixed(2));
+    return {
+      user: member,
+      netBalance: netBalance,
+    };
+  });
+}
+
+
+export function simplifyDebts(balances: Balance[]): SimplifiedSettlement[] {
+    const debtors = balances
+        .filter(b => b.netBalance < 0)
+        .map(b => ({ user: b.user, amount: Math.abs(b.netBalance) }));
+
+    const creditors = balances
+        .filter(b => b.netBalance > 0)
+        .map(b => ({ user: b.user, amount: b.netBalance }));
+    
+    debtors.sort((a, b) => b.amount - a.amount);
+    creditors.sort((a, b) => b.amount - a.amount);
+
+    const settlements: SimplifiedSettlement[] = [];
+    let i = 0;
+    let j = 0;
+
+    while (i < debtors.length && j < creditors.length) {
+        const debtor = debtors[i];
+        const creditor = creditors[j];
+        const amountToSettle = Math.min(debtor.amount, creditor.amount);
+
+        if (amountToSettle > 0.01) { 
+            settlements.push({
+                from: debtor.user,
+                to: creditor.user,
+                amount: amountToSettle,
+            });
+
+            debtor.amount -= amountToSettle;
+            creditor.amount -= amountToSettle;
+        }
+
+        if (debtor.amount < 0.01) i++;
+        if (creditor.amount < 0.01) j++;
+    }
+    return settlements;
+}
+
+// --- History/Audit Log Functions ---
+async function logHistoryEvent(groupId: string, eventType: string, actorId: string, description: string, data?: any) {
+  try {
+    const groupDocRef = doc(db, 'groups', groupId);
+    const groupSnap = await getDoc(groupDocRef);
+    const groupMemberIds = groupSnap.exists() ? (groupSnap.data() as GroupDocument).memberIds : [];
+    
+    await addDoc(collection(db, 'history'), {
+      groupId,
+      eventType,
+      actorId,
+      description,
+      data: data || null,
+      timestamp: Timestamp.now(),
+      restored: false,
+      groupMemberIds: groupMemberIds,
+    });
+  } catch (error) {
+    console.error("Failed to log history event:", error);
+  }
+}
+
+export async function getHistoryByGroupId(groupId: string): Promise<HistoryEvent[]> {
+  const user = auth.currentUser;
+  if (!user) return [];
+  
+  const q = query(
+    collection(db, 'history'), 
+    where('groupId', '==', groupId), 
+    where('groupMemberIds', 'array-contains', user.uid),
+    orderBy('timestamp', 'desc')
+  );
+  const querySnapshot = await getDocs(q);
+
+  const historyDocs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HistoryEventDocument & { id: string }));
+  
+  const actorIds = [...new Set(historyDocs.map(h => h.actorId))];
+  const actors = await hydrateUsers(actorIds);
+  const actorMap = new Map(actors.map(u => [u.uid, u]));
+
+  const historyEvents: HistoryEvent[] = historyDocs.map(doc => {
+    const actor = actorMap.get(doc.actorId);
+    if (!actor) return null; // Should not happen if data is clean
+    return {
+      ...doc,
+      timestamp: (doc.timestamp as Timestamp).toDate().toISOString(),
+      actor,
+    };
+  }).filter((h): h is HistoryEvent => h !== null);
+
+  return historyEvents;
+}
+
+export async function getHistoryForExpense(expenseId: string, groupId: string): Promise<HistoryEvent[]> {
+    const user = auth.currentUser;
+    if (!user) return [];
+
+    const q = query(
+        collection(db, 'history'), 
+        where('groupId', '==', groupId),
+        where('groupMemberIds', 'array-contains', user.uid),
+        where('data.expenseId', '==', expenseId),
+        orderBy('timestamp', 'desc')
+    );
+    const querySnapshot = await getDocs(q);
+
+    const historyDocs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HistoryEventDocument & { id: string }));
+    
+    const actorIds = [...new Set(historyDocs.map(h => h.actorId))];
+    const actors = await hydrateUsers(actorIds);
+    const actorMap = new Map(actors.map(u => [u.uid, u]));
+
+    const historyEvents: HistoryEvent[] = historyDocs.map(doc => {
+        const actor = actorMap.get(doc.actorId);
+        if (!actor) return null;
+        return {
+        ...doc,
+        timestamp: (doc.timestamp as Timestamp).toDate().toISOString(),
+        actor,
+        };
+    }).filter((h): h is HistoryEvent => h !== null);
+
+    return historyEvents;
+}
+
+
+export async function restoreExpense(historyEventId: string, actorId: string): Promise<string | null> {
+    const historyDocRef = doc(db, 'history', historyEventId);
+    const historySnap = await getDoc(historyDocRef);
+    
+    if (!historySnap.exists()) {
+        throw new Error("History event not found.");
+    }
+    
+    const historyData = historySnap.data() as HistoryEventDocument;
+    if (historyData.eventType !== 'expense_deleted' || !historyData.data) {
+        throw new Error("This history event cannot be restored.");
+    }
+    
+    const expenseToRestore = historyData.data;
+    const originalExpenseId = expenseToRestore.expenseId;
+
+    // Convert Firestore Timestamps back to JS Dates for addExpense function
+    if (expenseToRestore.date && expenseToRestore.date instanceof Timestamp) {
+        expenseToRestore.date = expenseToRestore.date.toDate();
+    }
+    
+    // The data for a deleted expense is the full ExpenseDocument. We need to pass this to addExpense.
+    const newExpenseId = await addExpense(expenseToRestore, actorId);
+
+    if (newExpenseId) {
+        await updateDoc(historyDocRef, { restored: true });
+        
+        const actor = await getUserProfile(actorId);
+        const restoreDescription = `${getFullName(actor?.firstName, actor?.lastName)} restored expense "${expenseToRestore.description}" for ${CURRENCY_SYMBOL}${(expenseToRestore.amount || 0).toFixed(2)}.`;
+        await logHistoryEvent(expenseToRestore.groupId, 'expense_restored', actorId, restoreDescription, { 
+            restoredFromHistoryId: historyEventId, 
+            newExpenseId: newExpenseId,
+            originalExpenseId: originalExpenseId,
+            expenseId: originalExpenseId, // Also add this for simpler querying on the original expense
+            date: expenseToRestore.date,
+        });
+
+        return newExpenseId;
+    }
+    
+    return null;
+}
+
+export async function restoreSettlement(historyEventId: string, actorId: string): Promise<string | null> {
+    const historyDocRef = doc(db, 'history', historyEventId);
+    const historySnap = await getDoc(historyDocRef);
+    
+    if (!historySnap.exists()) {
+        throw new Error("History event not found.");
+    }
+    
+    const historyData = historySnap.data() as HistoryEventDocument;
+    if (historyData.eventType !== 'settlement_deleted' || !historyData.data) {
+        throw new Error("This history event cannot be restored.");
+    }
+    
+    const settlementToRestore = historyData.data;
+    const originalSettlementId = settlementToRestore.settlementId;
+
+    // Convert Firestore Timestamps back to JS Dates for addSettlement function
+    if (settlementToRestore.date && settlementToRestore.date instanceof Timestamp) {
+        settlementToRestore.date = settlementToRestore.date.toDate();
+    }
+    
+    // The data for a deleted settlement is the full SettlementDocument. We can pass this to addSettlement.
+    const newSettlementId = await addSettlement(settlementToRestore, actorId);
+
+    if (newSettlementId) {
+        await updateDoc(historyDocRef, { restored: true });
+        
+        const actor = await getUserProfile(actorId);
+        const [paidBy, paidTo] = await Promise.all([
+            getUserProfile(settlementToRestore.paidById),
+            getUserProfile(settlementToRestore.paidToId),
+        ]);
+        const paidByName = getFullName(paidBy?.firstName, paidBy?.lastName);
+        const paidToName = getFullName(paidTo?.firstName, paidTo?.lastName);
+
+        const restoreDescription = `${getFullName(actor?.firstName, actor?.lastName)} restored a settlement from ${paidByName} to ${paidToName} for ${CURRENCY_SYMBOL}${(settlementToRestore.amount || 0).toFixed(2)}.`;
+        
+        await logHistoryEvent(settlementToRestore.groupId, 'settlement_restored', actorId, restoreDescription, { 
+            restoredFromHistoryId: historyEventId, 
+            newSettlementId: newSettlementId,
+            originalSettlementId: originalSettlementId,
+            settlementId: originalSettlementId, // Also add this for simpler querying on the original settlement
+            date: settlementToRestore.date,
+        });
+
+        return newSettlementId;
+    }
+    
+    return null;
+}
+
+export async function deleteHistoryEvent(historyEventId: string): Promise<void> {
+    const historyDocRef = doc(db, 'history', historyEventId);
+    await deleteDoc(historyDocRef);
+}
+
+
+// --- Site Settings ---
+const SETTINGS_COLLECTION = 'settings';
+const GENERAL_SETTINGS_DOC = 'general';
+const EXPENSE_CATEGORIES_DOC = 'expenseCategories';
+
+
+const DEFAULT_APP_NAME = '{AppName}';
+const FALLBACK_GROUP_COVER_IMAGES = [
+    'https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=2029&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1557682250-33bd709cbe85?q=80&w=2029&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1604079628040-94301bb21b91?q=80&w=1974&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1579546929662-7112e7508432?q=80&w=2070&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1511207538754-e8555f2bc187?q=80&w=1974&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1500462918059-b1a0cb512f1d?q=80&w=1974&auto=format&fit=crop',
+];
+const FALLBACK_LANDING_IMAGES = [
+    'https://images.unsplash.com/photo-1518655048521-f130df041f66?q=80&w=2070&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1497215728101-856f4ea42174?q=80&w=2070&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1522071820081-009f0129c71c?q=80&w=2070&auto=format&fit=crop',
+];
+
+const DEFAULT_COUNTRY_CODES: CountryCode[] = [
+    { name: 'India', code: '+91', flag: '🇮🇳' },
+    { name: 'United States', code: '+1', flag: '🇺🇸' },
+    { name: 'United Kingdom', code: '+44', flag: '🇬🇧' },
+    { name: 'Australia', code: '+61', flag: '🇦🇺' },
+    { name: 'Canada', code: '+1', flag: '🇨🇦' },
+];
+
+
+const DEFAULT_LANDING_PAGE_SETTINGS = {
+    headline: 'Manage Your Shared Expenses',
+    subheadline: 'The quantum leap in managing shared expenses. Track, split, and settle your group costs with futuristic ease.',
+    ctaButtonText: 'Enter the Grid',
+    imageRotationInterval: 1, // in hours
+    featuresTitle: "Everything You Need to Settle Up",
+    featuresSubtitle: "From weekend trips to monthly bills, {appName} handles the math so you don't have to.",
+    features: [
+        { icon: 'Users', title: "Group Management", description: "Create shared expense groups, invite members via email, and manage group settings." },
+        { icon: 'Expense', title: "Complex Expense Tracking", description: "Add detailed expenses with complex splits (equal, unequal, by shares, by percentage)." },
+        { icon: 'Wallet', title: "Real-time Balances", description: "Instantly see who owes whom within each group with a clear and concise balance sheet." },
+        { icon: 'Settle', title: "Simplified Settlements", description: "A smart algorithm calculates the most efficient way to settle all debts in the group." },
+    ] as LandingPageFeature[],
+    howItWorksTitle: "Split Expenses in a Snap",
+    howItWorksSubtitle: "Get started in three simple steps. Spend more time making memories, less time on math.",
+    howItWorksSteps: [
+        { title: 'Create a Group', description: 'Start a new group for any occasion and invite your friends, family, or roommates.' },
+        { title: 'Add Expenses', description: 'Log expenses as they happen. Our flexible splitting options handle any scenario.' },
+        { title: 'Settle Up', description: 'View balances and settle debts with the minimal number of payments. Everyone is happy!' },
+    ] as LandingPageStep[],
+    howItWorksImageUrl: 'https://placehold.co/800x600.png',
+    finalCtaTitle: "Ready to Simplify Your Shared Expenses?",
+    finalCtaSubtitle: "Create an account for free and say goodbye to awkward money conversations.",
+    finalCtaButtonText: "Sign Up Now - It's Free"
+};
+
+const DEFAULT_AUTH_PAGE_SETTINGS = {
+    imageUrl: 'https://images.unsplash.com/photo-1549880338-65ddcdfd017b?q=80&w=2070&auto=format&fit=crop',
+    loginTitle: 'Welcome Back',
+    loginSubtitle: 'Enter your credentials to access your account.',
+    signupTitle: 'Create an Account',
+    signupSubtitle: 'Join {appName} to simplify your group expenses.',
+    forgotPasswordTitle: 'Forgot Password',
+    forgotPasswordSubtitle: 'Enter your email to receive a reset link.',
+    loginEmailPlaceholder: 'elon@x.com',
+    loginPasswordPlaceholder: 'it\'s a secret...',
+    signupFirstNamePlaceholder: 'Bartholomew',
+    signupLastNamePlaceholder: 'Cubbins',
+    signupUsernamePlaceholder: 'the_real_slim_shady',
+    signupEmailPlaceholder: 'also.elon@x.com',
+    signupPasswordPlaceholder: 'at_least_6_characters',
+}
+
+const DEFAULT_ABOUT_SETTINGS = {
+    title: 'About {appName}',
+    subtitle: 'Simplifying shared expenses for everyone, everywhere.',
+    mainContent: 'Welcome to {appName}, the ultimate solution for managing group expenses without the hassle. Born from the common frustration of tracking who paid for what during trips, shared housing, and group events, {appName} was designed to be intuitive, powerful, and transparent.',
+    team: [
+        {
+            id: 'tm-1',
+            name: 'Yashraj Jangra',
+            title: 'Full-Stack Developer & Project Lead',
+            bio: 'Yashraj is a passionate developer who built this application to solve a real-world problem. He specializes in creating modern, user-friendly web applications with a focus on clean code and great user experience.',
+            avatarUrl: 'https://github.com/Yashraj-Jangra.png',
+            githubUrl: 'https://github.com/Yashraj-Jangra',
+            linkedinUrl: 'https://www.linkedin.com/in/yashraj-jangra-24016a213/',
+            portfolioUrl: 'https://yashraj-jangra.netlify.app/',
+        }
+    ]
+};
+
+const DEFAULT_PRIVACY_POLICY: PolicyPage = {
+    title: 'Privacy Policy',
+    sections: [
+        { id: 'pp_intro', title: '1. Introduction', content: 'Welcome to {appName} ("we", "our", "us"). We are committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our application. Please read this privacy policy carefully. If you do not agree with the terms of this privacy policy, please do not access the application.' },
+        { id: 'pp_collect', title: '2. Information We Collect', content: 'We may collect information about you in a variety of ways. The information we may collect on the Site includes: Personally identifiable information, such as your name, shipping address, email address, and telephone number, and demographic information, such as your age, gender, hometown, and interests, that you voluntarily give to us when you register with the Application.'},
+        { id: 'pp_use', title: '3. Use of Your Information', content: 'Having accurate information about you permits us to provide you with a smooth, efficient, and customized experience. Specifically, we may use information collected about you via the Application to: Create and manage your account, Email you regarding your account or order, Enable user-to-user communications, and Manage purchases, orders, payments, and other transactions related to the Application.'},
+        { id: 'pp_security', title: '4. Security of Your Information', content: 'We use administrative, technical, and physical security measures to help protect your personal information. While we have taken reasonable steps to secure the personal information you provide to us, please be aware that despite our efforts, no security measures are perfect or impenetrable, and no method of data transmission can be guaranteed against any interception or other type of misuse.'},
+        { id: 'pp_contact', title: '5. Contact Us', content: 'If you have questions or comments about this Privacy Policy, please contact us at: [email protected]'},
+    ]
+};
+
+const DEFAULT_TERMS_AND_CONDITIONS: PolicyPage = {
+    title: 'Terms of Service',
+    sections: [
+        { id: 'tc_acceptance', title: '1. Acceptance of Terms', content: 'By accessing or using the {appName} application ("Service"), you agree to be bound by these Terms of Service ("Terms"). If you disagree with any part of the terms, then you may not access the Service.' },
+        { id: 'tc_accounts', title: '2. User Accounts', content: 'When you create an account with us, you must provide us with information that is accurate, complete, and current at all times. Failure to do so constitutes a breach of the Terms, which may result in immediate termination of your account on our Service. You are responsible for safeguarding the password that you use to access the Service and for any activities or actions under your password, whether your password is with our Service or a third-party service.' },
+        { id: 'tc_conduct', title: '3. User Conduct', content: 'You agree not to use the Service to: Violate any local, state, national, or international law; Transmit any material that is abusive, harassing, tortious, defamatory, vulgar, pornographic, obscene, libelous, invasive of another\'s privacy, hateful, or racially, ethnically, or otherwise objectionable; Impersonate any person or entity, or falsely state or otherwise misrepresent your affiliation with a person or entity.' },
+        { id: 'tc_liability', title: '4. Limitation of Liability', content: 'In no event shall {appName}, nor its directors, employees, partners, agents, suppliers, or affiliates, be liable for any indirect, incidental, special, consequential or punitive damages, including without limitation, loss of profits, data, use, goodwill, or other intangible losses, resulting from your access to or use of or inability to access or use the Service.' },
+        { id: 'tc_law', title: '5. Governing Law', content: 'These Terms shall be governed and construed in accordance with the laws of the jurisdiction in which the company is based, without regard to its conflict of law provisions.' },
+    ]
+};
+
+const DEFAULT_NOT_FOUND_PAGE_SETTINGS = {
+    title: "404 - Page Not Found",
+    heading: "Lost in the Cosmos?",
+    mainContent: "It seems you've drifted into uncharted territory. The page you're looking for might have been moved to another galaxy or never existed in the first place.",
+    helpfulHint: "Try checking the URL for typos or navigate back to a known constellation.",
+    supportNote: "If you believe this is a black hole in our system, please contact support.",
+    buttonText: "Return to Home Base",
+    imageUrl: "https://images.unsplash.com/photo-1578328819058-b69f3a3b0f6b?q=80&w=1974&auto=format&fit=crop",
+};
+
+const DEFAULT_MAINTENANCE_MODE_SETTINGS = {
+  enabled: false,
+  title: 'Under Maintenance',
+  message: "We're currently performing some scheduled maintenance. We'll be back online shortly!",
+  imageUrl: 'https://images.unsplash.com/photo-1589998059171-988d887df646?q=80&w=2070&auto=format&fit=crop'
+};
+
+const DEFAULT_EMAIL_TEMPLATES: SiteSettings['emailTemplates'] = {
+    registration: { subject: 'Welcome to {appName}!', body: 'Hi {userName},\n\nWelcome to {appName}! We are excited to have you on board. You can now start creating groups and managing your shared expenses.\n\nThanks,\nThe {appName} Team' },
+    forgotPassword: { subject: 'Password Reset Request for {appName}', body: 'Hi {userName},\n\nYou requested to reset your password. Please click the link below to set a new password:\n{resetLink}\n\nIf you did not request this, you can safely ignore this email.\n\nThanks,\nThe {appName} Team' },
+    loginNotification: { subject: 'New Login to Your {appName} Account', body: 'Hi {userName},\n\nWe detected a new login to your {appName} account. If this was you, you can ignore this email. If you do not recognize this activity, please reset your password immediately.\n\nThanks,\nThe {appName} Team' },
+    monthlyReport: { subject: 'Your Monthly Report from {appName}', body: 'Hi {userName},\n\nHere is your expense report for the last month.\n\nTotal Spent: {totalSpent}\nNumber of Expenses: {expenseCount}\n\nLog in to see more details.\n\nThanks,\nThe {appName} Team' },
+    paymentReminder: { subject: 'Payment Reminder from {appName}', body: 'Hi {userName},\n\nThis is a friendly reminder that you have outstanding balances in one or more of your groups. Please log in to settle your debts.\n\nThanks,\nThe {appName} Team' },
+    supportTicketConfirmation: { subject: 'Your Support Ticket has been Received', body: 'Hi {userName},\n\nThank you for reaching out. We have received your support ticket (ID: {ticketId}) and a member of our team will get back to you shortly.\n\nSubject: {ticketSubject}\n\nThanks,\nThe {appName} Team'},
+    supportTicketAdminNotification: { subject: '[{appName} Support] New Ticket from {userName}', body: 'A new support ticket has been created.\n\nUser: {userName} ({userEmail})\nSubject: {ticketSubject}\nCategory: {ticketCategory}\n\nMessage: {ticketMessage}\n\nView ticket here: {ticketLink}'},
+    supportTicketReply: { subject: 'Re: Your Support Ticket #{ticketId}', body: 'Hi {userName},\n\nA reply has been added to your support ticket.\n\n{replyMessage}\n\nView the full conversation here: {ticketLink}\n\nThanks,\nThe {appName} Team'}
+};
+
+const DEFAULT_EMAIL_SETTINGS = {
+    sendingMethod: 'firebase' as 'firebase' | 'custom' | 'gmail',
+    fromAddresses: {
+        default: 'noreply@example.com',
+        support: 'support@example.com',
+        broadcast: 'broadcast@example.com',
+    },
+    smtpSettings: {
+      host: '',
+      port: 587,
+      user: '',
+      pass: '',
+      secure: false,
+    },
+    gmailSettings: {
+        connectedEmail: '',
+    }
+};
+
+async function getExpenseCategories(): Promise<Record<string, MasterCategory>> {
+    const docRef = doc(db, SETTINGS_COLLECTION, EXPENSE_CATEGORIES_DOC);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+        // The document's data is the Record<string, MasterCategory>
+        return docSnap.data() as Record<string, MasterCategory>;
+    } else {
+        // If the document doesn't exist, create it with default values
+        await setDoc(docRef, defaultExpenseCategories);
+        return defaultExpenseCategories;
+    }
+}
+
+export async function getSiteSettings(): Promise<SiteSettings> {
+    const generalDocRef = doc(db, SETTINGS_COLLECTION, GENERAL_SETTINGS_DOC);
+    
+    const [generalDocSnap, expenseCategories] = await Promise.all([
+        getDoc(generalDocRef),
+        getExpenseCategories()
+    ]);
+
+    if (generalDocSnap.exists()) {
+        const data = generalDocSnap.data();
+        
+        const privacyPolicy = data.privacyPolicy && Array.isArray(data.privacyPolicy.sections)
+            ? data.privacyPolicy
+            : DEFAULT_PRIVACY_POLICY;
+            
+        const termsAndConditions = data.termsAndConditions && Array.isArray(data.termsAndConditions.sections)
+            ? data.termsAndConditions
+            : DEFAULT_TERMS_AND_CONDITIONS;
+        
+        const about = {
+            ...DEFAULT_ABOUT_SETTINGS,
+            ...(data.about || {}),
+        };
+        if (!about.team || !Array.isArray(about.team) || about.team.length === 0) {
+            about.team = DEFAULT_ABOUT_SETTINGS.team;
+        }
+
+        const emailTemplates = { ...DEFAULT_EMAIL_TEMPLATES, ...(data.emailTemplates || {})};
+        
+        // Merge fromAddresses carefully
+        const defaultFrom = DEFAULT_EMAIL_SETTINGS.fromAddresses;
+        const savedFrom = data.emailSettings?.fromAddresses || {};
+        const fromAddresses = { ...defaultFrom, ...savedFrom };
+
+        // Handle migration from old `fromEmail` and `supportEmail`
+        if (data.emailSettings?.fromEmail && !savedFrom.default) {
+            fromAddresses.default = data.emailSettings.fromEmail;
+        }
+        if (data.emailSettings?.supportEmail && !savedFrom.support) {
+            fromAddresses.support = data.emailSettings.supportEmail;
+        }
+        
+        const emailSettings = { 
+            ...DEFAULT_EMAIL_SETTINGS, 
+            ...(data.emailSettings || {}),
+            fromAddresses,
+        };
+        
+        // Clean up old top-level properties if they exist after merging
+        delete (emailSettings as any).fromEmail;
+        delete (emailSettings as any).supportEmail;
+
+        return {
+            appName: data.appName || DEFAULT_APP_NAME,
+            logoUrl: data.logoUrl || '',
+            faviconUrl: data.faviconUrl || '/favicon.svg',
+            coverImages: data.coverImages?.length > 0 ? data.coverImages : FALLBACK_GROUP_COVER_IMAGES,
+            landingImages: data.landingImages?.length > 0 ? data.landingImages : FALLBACK_LANDING_IMAGES,
+            customThemes: data.customThemes || [],
+            defaultThemeId: data.defaultThemeId || 'default-dark',
+            userSelectableThemeIds: data.userSelectableThemeIds || ['default-dark', 'default-light'],
+            expenseCategories: expenseCategories,
+            countryCodes: data.countryCodes?.length > 0 ? data.countryCodes : DEFAULT_COUNTRY_CODES,
+            landingPage: { ...DEFAULT_LANDING_PAGE_SETTINGS, ...(data.landingPage || {}) },
+            authPage: { ...DEFAULT_AUTH_PAGE_SETTINGS, ...(data.authPage || {}) },
+            about,
+            privacyPolicy,
+            termsAndConditions,
+            notFoundPage: { ...DEFAULT_NOT_FOUND_PAGE_SETTINGS, ...(data.notFoundPage || {}) },
+            stats: data.stats || { users: 0, groups: 0, expenses: 0 },
+            maintenanceMode: { ...DEFAULT_MAINTENANCE_MODE_SETTINGS, ...(data.maintenanceMode || {}) },
+            emailSettings,
+            emailTemplates,
+        };
+    } else {
+        const defaultSettings: SiteSettings = {
+            appName: DEFAULT_APP_NAME,
+            logoUrl: '',
+            faviconUrl: '/favicon.svg',
+            coverImages: FALLBACK_GROUP_COVER_IMAGES,
+            landingImages: FALLBACK_LANDING_IMAGES,
+            customThemes: [],
+            defaultThemeId: 'default-dark',
+            userSelectableThemeIds: ['default-dark', 'default-light'],
+            expenseCategories: expenseCategories, // Use the fetched/defaulted categories
+            countryCodes: DEFAULT_COUNTRY_CODES,
+            landingPage: DEFAULT_LANDING_PAGE_SETTINGS,
+            authPage: DEFAULT_AUTH_PAGE_SETTINGS,
+            about: DEFAULT_ABOUT_SETTINGS,
+            privacyPolicy: DEFAULT_PRIVACY_POLICY,
+            termsAndConditions: DEFAULT_TERMS_AND_CONDITIONS,
+            notFoundPage: DEFAULT_NOT_FOUND_PAGE_SETTINGS,
+            stats: { users: 0, groups: 0, expenses: 0 },
+            maintenanceMode: DEFAULT_MAINTENANCE_MODE_SETTINGS,
+            emailSettings: DEFAULT_EMAIL_SETTINGS,
+            emailTemplates: DEFAULT_EMAIL_TEMPLATES,
+        };
+        await setDoc(generalDocRef, {
+            ...defaultSettings,
+            expenseCategories: undefined, // Don't save categories in the general doc
+        });
+        return defaultSettings;
+    }
+}
+
+export async function updateSiteSettings(settings: Partial<SiteSettings>): Promise<void> {
+    const { expenseCategories, ...generalSettings } = settings;
+    const generalDocRef = doc(db, SETTINGS_COLLECTION, GENERAL_SETTINGS_DOC);
+    
+    // Update general settings if there are any
+    const cleanGeneralSettings = Object.fromEntries(Object.entries(generalSettings).filter(([_, v]) => v !== undefined));
+    if (Object.keys(cleanGeneralSettings).length > 0) {
+        await setDoc(generalDocRef, cleanGeneralSettings, { merge: true });
+    }
+
+    // Update expense categories if they are provided
+    if (expenseCategories) {
+        const categoriesDocRef = doc(db, SETTINGS_COLLECTION, EXPENSE_CATEGORIES_DOC);
+        await setDoc(categoriesDocRef, expenseCategories);
+    }
+}
+
+// --- Support Ticket Functions ---
+
+export async function getTicketsByUserId(userId: string): Promise<SupportTicket[]> {
+    const ticketsCol = collection(db, 'tickets');
+    const q = query(
+        ticketsCol, 
+        where('userId', '==', userId), 
+        orderBy('updatedAt', 'desc')
+    );
+    const ticketSnapshot = await getDocs(q);
+
+    const ticketDocs = ticketSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as SupportTicketDocument & { id: string }));
+
+    const allUserIds = new Set<string>();
+    ticketDocs.forEach(doc => {
+        doc.messages.forEach(msg => allUserIds.add(msg.sentById));
+    });
+
+    const users = await hydrateUsers(Array.from(allUserIds));
+    const userMap = new Map(users.map(u => [u.uid, u]));
+    
+    const tickets: SupportTicket[] = ticketDocs.map(doc => {
+        const user = userMap.get(doc.userId);
+        if (!user) return null;
+
+        const messages: SupportTicketMessage[] = doc.messages.map(msg => {
+            const sentBy = userMap.get(msg.sentById);
+            if (!sentBy) return null;
+            return {
+                ...msg,
+                sentAt: (msg.sentAt as Timestamp).toDate().toISOString(),
+                sentBy: sentBy,
+            };
+        }).filter((m): m is SupportTicketMessage => m !== null);
+
+        return {
+            ...doc,
+            createdAt: (doc.createdAt as Timestamp).toDate().toISOString(),
+            updatedAt: (doc.updatedAt as Timestamp).toDate().toISOString(),
+            user,
+            assignedTo: doc.assignedToId ? userMap.get(doc.assignedToId) : undefined,
+            messages,
+        }
+    }).filter((t): t is SupportTicket => t !== null);
+
+    return tickets;
+}
+
+
+export async function getAllTickets(): Promise<SupportTicket[]> {
+    const ticketsCol = collection(db, 'tickets');
+    const ticketSnapshot = await getDocs(query(ticketsCol, orderBy('updatedAt', 'desc')));
+    
+    const userIds = new Set<string>();
+    const ticketDocs = ticketSnapshot.docs.map(doc => {
+        const data = doc.data() as SupportTicketDocument;
+        userIds.add(data.userId);
+        if (data.assignedToId) userIds.add(data.assignedToId);
+        data.messages.forEach(msg => userIds.add(msg.sentById));
+        return { id: doc.id, ...data };
+    });
+
+    const users = await hydrateUsers(Array.from(userIds));
+    const userMap = new Map(users.map(u => [u.uid, u]));
+
+    const tickets: SupportTicket[] = ticketDocs.map(doc => {
+        const user = userMap.get(doc.userId);
+        if (!user) return null;
+
+        const messages: SupportTicketMessage[] = doc.messages.map(msg => {
+            const sentBy = userMap.get(msg.sentById);
+            if (!sentBy) return null;
+            return {
+                ...msg,
+                sentAt: (msg.sentAt as Timestamp).toDate().toISOString(),
+                sentBy: sentBy,
+            };
+        }).filter((m): m is SupportTicketMessage => m !== null);
+
+        return {
+            ...doc,
+            createdAt: (doc.createdAt as Timestamp).toDate().toISOString(),
+            updatedAt: (doc.updatedAt as Timestamp).toDate().toISOString(),
+            user,
+            assignedTo: doc.assignedToId ? userMap.get(doc.assignedToId) : undefined,
+            messages,
+        }
+    }).filter((t): t is SupportTicket => t !== null);
+
+    return tickets;
+}
+
+export async function deleteTicket(ticketId: string): Promise<void> {
+    const ticketDocRef = doc(db, 'tickets', ticketId);
+    await deleteDoc(ticketDocRef);
+}
+
+export async function updateTicket(ticketId: string, data: Partial<SupportTicketDocument>): Promise<void> {
+    const ticketDocRef = doc(db, 'tickets', ticketId);
+    const updateData = { ...data, updatedAt: Timestamp.now() };
+    await updateDoc(ticketDocRef, updateData);
+}
+
+// --- Notification Functions ---
+
+export async function getAllNotifications(): Promise<Notification[]> {
+    const notifsCol = collection(db, 'notifications');
+    const notifSnapshot = await getDocs(query(notifsCol, orderBy('createdAt', 'desc')));
+    
+    const notifications: Notification[] = notifSnapshot.docs.map(doc => {
+        const data = doc.data() as NotificationDocument;
+        return {
+            id: doc.id,
+            ...data,
+            createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+        } as Notification;
+    });
+
+    return notifications;
+}
+
+export async function deleteNotification(notificationId: string): Promise<void> {
+    const notifDocRef = doc(db, 'notifications', notificationId);
+    await deleteDoc(notifDocRef);
+}
