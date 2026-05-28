@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
@@ -9,7 +10,7 @@ import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
 
 import type { UserProfile } from '@/types';
 import { app, db, auth, firebaseError } from '@/lib/firebase';
-import { isUsernameTaken } from '@/lib/mock-data';
+import { isUsernameTaken, getSiteSettings } from '@/lib/mock-data';
 
 const ADMIN_EMAIL = 'jangrayash1505@gmail.com';
 
@@ -41,6 +42,13 @@ const fetchUserProfile = async (uid: string): Promise<UserProfile | null> => {
   const userDocSnap = await getDoc(userDocRef);
   if (userDocSnap.exists()) {
     const data = userDocSnap.data();
+    const defaultNotificationSettings = {
+        new_expense: true,
+        expense_updated: true,
+        new_settlement: true,
+        member_added: true,
+        debt_reminder: true,
+    };
     return {
       uid: userDocSnap.id,
       firstName: data.firstName,
@@ -53,6 +61,7 @@ const fetchUserProfile = async (uid: string): Promise<UserProfile | null> => {
       mobileNumber: data.mobileNumber,
       dob: data.dob ? (data.dob as Timestamp)?.toDate().toISOString() : undefined,
       createdAt: (data.createdAt as Timestamp)?.toDate().toISOString(),
+      notificationSettings: { ...defaultNotificationSettings, ...(data.notificationSettings || {}) },
     } as UserProfile;
   }
   return null;
@@ -76,6 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         if (!profile) {
             console.warn(`User profile not found for uid: ${user.uid}. Creating a new one.`);
+            const siteSettings = await getSiteSettings(); // FETCH SETTINGS
             let username = user.email?.split('@')[0] || `user${Date.now()}`;
             let usernameIsTaken = await isUsernameTaken(username);
             while (usernameIsTaken) {
@@ -89,8 +99,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             const userRole = user.email === ADMIN_EMAIL ? 'admin' : 'user';
 
-            const newUserProfile: Omit<UserProfile, 'uid' | 'createdAt' | 'dob'> & {uid: string; createdAt: Timestamp; dob?: Timestamp} = {
-                uid: user.uid,
+            const newUserProfile: Omit<UserProfile, 'uid' | 'createdAt' | 'dob'> = {
                 firstName: firstName,
                 lastName: lastName,
                 username: username,
@@ -150,17 +159,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             throw new Error("Username is already taken.");
         }
         
+        const siteSettings = await getSiteSettings();
         const userRole = data.email === ADMIN_EMAIL ? 'admin' : 'user';
 
         // 3. If username is available, create the user profile document.
-        const newUserProfile: Omit<UserProfile, 'uid' | 'createdAt' | 'dob'> & {uid: string; createdAt: Timestamp; dob?: Timestamp} = {
-            uid: user.uid,
+        const newUserProfile: Omit<UserProfile, 'uid' | 'createdAt' | 'dob'> = {
             ...data,
             role: userRole,
-            avatarUrl: `https://placehold.co/100x100.png?text=${data.firstName.substring(0, 1).toUpperCase()}${data.lastName?.substring(0, 1).toUpperCase() || ''}`,
+            avatarUrl: `https://ui-avatars.com/api/?name=${data.firstName}+${data.lastName || ''}`,
         };
         
-        const finalProfileData: any = { ...newUserProfile, createdAt: Timestamp.now() };
+        const finalProfileData: any = { 
+            ...newUserProfile, 
+            createdAt: Timestamp.now(),
+        };
         if (data.dob) {
             finalProfileData.dob = Timestamp.fromDate(new Date(data.dob));
         }

@@ -31,6 +31,7 @@ import { GroupAnalysisCharts } from '@/components/groups/group-analysis-charts';
 import { GroupHistoryTab } from '@/components/groups/group-history';
 import { GroupSettingsTab } from '@/components/groups/group-settings-tab';
 import { appEventEmitter } from '@/lib/event-emitter';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 const TABS: { value: string; label: string; icon: IconName }[] = [
     { value: 'expenses', label: 'Activity', icon: 'History' },
@@ -58,10 +59,22 @@ export default function GroupDetailPage() {
   const [activeTab, setActiveTab] = useState('expenses');
   const [targetExpenseId, setTargetExpenseId] = useState<string | null>(null);
   const [activeAccordionItem, setActiveAccordionItem] = useState<string | undefined>(undefined);
+  const isMobile = useIsMobile();
+  const [showAnalysisHeadsUp, setShowAnalysisHeadsUp] = useState(false);
 
-  const loadGroupData = useCallback(async () => {
+  useEffect(() => {
+    if (activeTab === 'analysis' && isMobile) {
+      setShowAnalysisHeadsUp(true);
+      const timer = setTimeout(() => {
+        setShowAnalysisHeadsUp(false);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, isMobile]);
+
+  const loadGroupData = useCallback(async (silent = false) => {
     if (!groupId || !userProfile) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(false);
     try {
       const [
@@ -112,11 +125,12 @@ export default function GroupDetailPage() {
 
   useEffect(() => {
     loadGroupData();
-    
-    appEventEmitter.on('data-changed', loadGroupData);
+
+    const handleDataChanged = () => loadGroupData(true);
+    appEventEmitter.on('data-changed', handleDataChanged);
 
     return () => {
-      appEventEmitter.off('data-changed', loadGroupData);
+      appEventEmitter.off('data-changed', handleDataChanged);
     };
 
   }, [loadGroupData]);
@@ -220,6 +234,7 @@ export default function GroupDetailPage() {
                                     settlement={settlement}
                                     currentUserId={userProfile.uid}
                                     group={group}
+                                    groupHistory={groupHistory}
                                 />
                             )
                         }
@@ -257,6 +272,7 @@ export default function GroupDetailPage() {
                       settlement={settlement}
                       currentUserId={userProfile.uid}
                       group={group}
+                      groupHistory={groupHistory}
                     />
                   ))}
                 </Accordion>
@@ -278,7 +294,26 @@ export default function GroupDetailPage() {
         </TabsContent>
 
         <TabsContent value="analysis" className="mt-4">
-          <GroupAnalysisCharts expenses={expenses} members={group.members} />
+          {showAnalysisHeadsUp ? (
+            <div className="flex items-center justify-center min-h-[400px] p-6 animate-in fade-in-0 duration-500">
+                <Card className="w-full max-w-md text-center">
+                    <CardHeader>
+                        <div className="flex justify-center mb-4">
+                            <Icons.Analysis className="h-16 w-16 text-primary" />
+                        </div>
+                        <CardTitle className="text-2xl font-headline">Better on Desktop</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <p className="text-muted-foreground">
+                            For the best experience with charts and data, we recommend viewing this page on a larger screen.
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-4">Loading analytics...</p>
+                    </CardContent>
+                </Card>
+            </div>
+          ) : (
+            <GroupAnalysisCharts expenses={expenses} members={group.members} />
+          )}
         </TabsContent>
 
         <TabsContent value="history" className="mt-4">

@@ -1,15 +1,16 @@
 
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { Skeleton } from '@/components/ui/skeleton';
 import { NetBalanceCard } from '@/components/dashboard/net-balance-card';
 import { ObligationsCard } from '@/components/dashboard/obligations-card';
 import { DynamicSpendingChart } from '@/components/dashboard/dynamic-spending-chart';
 import { PredictiveInsights } from '@/components/dashboard/predictive-insights';
-import { getExpensesByUserId, getSettlementsByUserId, getGroupsByUserId, getGroupBalances } from '@/lib/mock-data';
-import type { Expense, Settlement, Group, Balance } from '@/types';
+import { getExpensesByUserId, getSettlementsByUserId, getGroupsByUserId, getGroupBalances, simplifyDebts } from '@/lib/mock-data';
+import type { Expense, Settlement, Group, Balance, SimplifiedSettlement, UserProfile } from '@/types';
+import { appEventEmitter } from '@/lib/event-emitter';
 
 interface DashboardData {
   expenses: Expense[];
@@ -40,27 +41,66 @@ function DashboardSkeleton() {
 async function getOverallBalances(userId: string): Promise<Balance[]> {
     const userGroups = await getGroupsByUserId(userId);
     if (userGroups.length === 0) return [];
-    
+
+    // 1. Get all balances for each group
     const allGroupBalancesPromises = userGroups.map(group => getGroupBalances(group.id));
-    const allGroupBalances = await Promise.all(allGroupBalancesPromises);
+    const allGroupBalancesArrays = await Promise.all(allGroupBalancesPromises);
 
-    const userBalanceMap = new Map<string, { user: any, netBalance: number }>();
+    // 2. Simplify debts for each group to get P2P transactions
+    const allSettlements: SimplifiedSettlement[] = allGroupBalancesArrays
+        .map(groupBalances => simplifyDebts(groupBalances))
+        .flat();
 
-    allGroupBalances.flat().forEach(balance => {
-        if (balance.user.uid === userId) return;
-        const existing = userBalanceMap.get(balance.user.uid) || { user: balance.user, netBalance: 0 };
-        existing.netBalance += balance.netBalance;
-        userBalanceMap.set(balance.user.uid, existing);
+    // 3. Aggregate P2P transactions to find net balance with each person
+    const userP2PBalanceMap = new Map<string, { user: UserProfile, netBalance: number }>();
+
+    allSettlements.forEach(settlement => {
+        // If I am the one who needs to pay
+        if (settlement.from.uid === userId) {
+            const otherUser = settlement.to;
+            const existing = userP2PBalanceMap.get(otherUser.uid) || { user: otherUser, netBalance: 0 };
+            // I owe them, so my debt to them is a positive value in this context
+            existing.netBalance += settlement.amount;
+            userP2PBalanceMap.set(otherUser.uid, existing);
+        }
+        // If I am the one who should receive money
+        else if (settlement.to.uid === userId) {
+            const otherUser = settlement.from;
+            const existing = userP2PBalanceMap.get(otherUser.uid) || { user: otherUser, netBalance: 0 };
+            // They owe me, so my "debt" to them is negative (i.e., they owe me)
+            existing.netBalance -= settlement.amount;
+            userP2PBalanceMap.set(otherUser.uid, existing);
+        }
     });
 
-    return Array.from(userBalanceMap.values());
+    return Array.from(userP2PBalanceMap.values());
 }
+
 
 export default function DashboardPage() {
   const { userProfile, loading: authLoading } = useAuth();
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [greeting, setGreeting] = useState('');
+
+  const loadDashboardData = useCallback(async () => {
+    if (!userProfile?.uid) return;
+    
+    setDataLoading(true);
+    try {
+        const [expenses, settlements, balances] = await Promise.all([
+            getExpensesByUserId(userProfile.uid),
+            getSettlementsByUserId(userProfile.uid),
+            getOverallBalances(userProfile.uid)
+        ]);
+        setDashboardData({ expenses, settlements, balances });
+    } catch (error) {
+        console.error("Failed to load dashboard data:", error);
+        // Optionally, set an error state here
+    } finally {
+        setDataLoading(false);
+    }
+  }, [userProfile]);
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -72,29 +112,15 @@ export default function DashboardPage() {
       setGreeting('Good evening');
     }
 
-    async function loadDashboardData() {
-        if (!userProfile?.uid) return;
-        
-        setDataLoading(true);
-        try {
-            const [expenses, settlements, balances] = await Promise.all([
-                getExpensesByUserId(userProfile.uid),
-                getSettlementsByUserId(userProfile.uid),
-                getOverallBalances(userProfile.uid)
-            ]);
-            setDashboardData({ expenses, settlements, balances });
-        } catch (error) {
-            console.error("Failed to load dashboard data:", error);
-            // Optionally, set an error state here
-        } finally {
-            setDataLoading(false);
-        }
-    }
-    
     if (userProfile) {
         loadDashboardData();
     }
-  }, [userProfile]);
+
+    appEventEmitter.on('data-changed', loadDashboardData);
+    return () => {
+        appEventEmitter.off('data-changed', loadDashboardData);
+    };
+  }, [userProfile, loadDashboardData]);
 
   if (authLoading || dataLoading || !userProfile || !dashboardData) {
     return <DashboardSkeleton />;

@@ -46,8 +46,6 @@ import type {
   Theme,
   ExpenseCategory,
   MasterCategory,
-  Notification,
-  NotificationDocument,
 } from '@/types';
 import { getFullName } from './utils';
 import { CURRENCY_SYMBOL } from './constants';
@@ -56,6 +54,14 @@ import { defaultExpenseCategories, getMasterCategory } from './expense-categorie
 import { BASE_THEMES } from '@/themes';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError, type SecurityRuleContext } from '@/firebase/errors';
+import { 
+    notifyExpenseAdded, 
+    notifyExpenseUpdated, 
+    notifyExpenseDeleted, 
+    notifySettlementAdded, 
+    notifyMemberAdded, 
+    notifyMemberRemoved 
+} from './notification-service';
 
 // --- User Functions ---
 
@@ -223,7 +229,7 @@ export async function getGroupsByUserId(userId: string): Promise<Group[]> {
                 createdBy
             }
         })
-    );
+    ) as unknown as Group[];
     return groups.filter((g): g is Group => g !== null).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
@@ -252,8 +258,8 @@ export async function getAllGroups(): Promise<Group[]> {
                 archivedAt: (groupData.archivedAt as Timestamp)?.toDate().toISOString() || undefined,
                 members,
                 createdBy
-            }
-        });
+            } as unknown as Group;
+        }) as unknown as Group[];
     return groups.filter((g): g is Group => g !== null);
 }
 
@@ -271,6 +277,13 @@ export async function addMembersToGroup(groupId: string, memberIds: string[], ac
     const newMemberNames = newMembers.map(m => getFullName(m.firstName, m.lastName)).join(', ');
     const description = `${actorName} added ${newMemberNames} to the group.`;
     await logHistoryEvent(groupId, 'member_added', actorId, description, { memberIds });
+
+    // Notification Logic
+    const groupName = (await getDoc(groupDocRef)).data()?.name || 'your group';
+    const recipientIds = memberIds.filter(id => id !== actorId);
+    if (recipientIds.length > 0) {
+        await notifyMemberAdded(recipientIds, actorId, groupId, groupName);
+    }
 }
 
 export async function archiveGroup(groupId: string, actorId: string): Promise<void> {
@@ -284,6 +297,32 @@ export async function archiveGroup(groupId: string, actorId: string): Promise<vo
     const description = `${actorName} archived the group.`;
     await logHistoryEvent(groupId, 'group_updated', actorId, description, { changes: [{ field: 'Status', from: 'Active', to: 'Archived' }] });
 }
+
+export async function deleteGroupPermanently(groupId: string): Promise<void> {
+    const batch = writeBatch(db);
+
+    // 1. Delete expenses
+    const expensesQuery = query(collection(db, 'expenses'), where('groupId', '==', groupId));
+    const expensesSnapshot = await getDocs(expensesQuery);
+    expensesSnapshot.forEach(doc => batch.delete(doc.ref));
+
+    // 2. Delete settlements
+    const settlementsQuery = query(collection(db, 'settlements'), where('groupId', '==', groupId));
+    const settlementsSnapshot = await getDocs(settlementsQuery);
+    settlementsSnapshot.forEach(doc => batch.delete(doc.ref));
+
+    // 3. Delete history
+    const historyQuery = query(collection(db, 'history'), where('groupId', '==', groupId));
+    const historySnapshot = await getDocs(historyQuery);
+    historySnapshot.forEach(doc => batch.delete(doc.ref));
+
+    // 4. Delete the group itself
+    const groupDocRef = doc(db, 'groups', groupId);
+    batch.delete(groupDocRef);
+
+    await batch.commit();
+}
+
 
 export async function restoreGroup(groupId: string, actorId: string): Promise<void> {
     const groupDocRef = doc(db, 'groups', groupId);
@@ -364,6 +403,12 @@ export async function removeMemberFromGroup(groupId: string, memberIdToRemove: s
     await updateDoc(groupDocRef, {
         memberIds: arrayRemove(memberIdToRemove)
     });
+
+    // Notification Logic
+    const groupName = (await getDoc(groupDocRef)).data()?.name || 'a group';
+    if (memberIdToRemove !== actorId) {
+        await notifyMemberRemoved(memberIdToRemove, actorId, groupId, groupName);
+    }
 }
 
 
@@ -411,6 +456,19 @@ export async function addExpense(expenseData: Omit<ExpenseDocument, 'date' | 'pa
         const actorName = getFullName(actor?.firstName, actor?.lastName);
         const description = `${actorName} added expense "${expenseData.description}" for ${CURRENCY_SYMBOL}${expenseData.amount.toFixed(2)}.`;
         await logHistoryEvent(expenseData.groupId, 'expense_created', actorId, description, { expenseId: docRef.id, date: expenseData.date });
+
+        // Notification logic
+        const recipientIds = expenseData.participants.map(p => p.userId).filter(id => id !== actorId);
+        if (recipientIds.length > 0) {
+            await notifyExpenseAdded(
+                recipientIds,
+                actorId,
+                expenseData.groupId,
+                docRef.id,
+                expenseData.description,
+                expenseData.amount
+            );
+        }
 
         return docRef.id;
     } catch (serverError) {
@@ -465,14 +523,17 @@ export async function updateExpense(expenseId: string, oldAmount: number, expens
             totalExpenses: newTotal
         });
 
-        // ... history logging ...
-        const actor = await getUserProfile(actorId);
-        const actorName = getFullName(actor?.firstName, actor?.lastName);
-        
-        const changes: { field: string; from: any; to: any }[] = [];
-        const changeSummaries: string[] = [];
-
+        // --- History & Notification Logging ---
         if (oldData) {
+            const groupMembers = await hydrateUsers(groupData.memberIds);
+            const userMap = new Map(groupMembers.map(u => [u.uid, u]));
+            
+            const actor = userMap.get(actorId) || await getUserProfile(actorId); // Fallback if actor not in group
+            const actorName = getFullName(actor?.firstName, actor?.lastName);
+            
+            const changes: { field: string; from: any; to: any }[] = [];
+            const changeSummaries: string[] = [];
+
             const oldDate = (oldData.date as Timestamp).toDate();
 
             if (oldData.description !== expenseData.description) {
@@ -495,43 +556,91 @@ export async function updateExpense(expenseId: string, oldAmount: number, expens
                  changes.push({ field: 'Split Method', from: `"${oldData.splitType}"`, to: `"${expenseData.splitType}"` });
                  changeSummaries.push('split method');
             }
-            if (oldData.notes !== expenseData.notes) {
+            if (oldData.notes !== (expenseData.notes || '')) {
               changes.push({ field: 'Notes', from: `"${oldData.notes || ''}"`, to: `"${expenseData.notes || ''}"` });
               changeSummaries.push('notes');
             }
 
-            const oldPayersStr = JSON.stringify(oldData.payers.sort((a,b) => a.userId.localeCompare(b.userId)));
-            const newPayersStr = JSON.stringify(expenseData.payers.sort((a,b) => a.userId.localeCompare(b.userId)));
-            if (oldPayersStr !== newPayersStr) {
-                changes.push({ field: 'Payers', from: 'List of payers was updated.', to: '' });
+            // Payers detailed changes
+            const oldPayersMap = new Map(oldData.payers.map(p => [p.userId, p.amount]));
+            const newPayersMap = new Map(expenseData.payers.map(p => [p.userId, p.amount]));
+            const allPayerIds = new Set([...oldPayersMap.keys(), ...newPayersMap.keys()]);
+            const payerChanges: string[] = [];
+
+            allPayerIds.forEach(id => {
+                const oldAmount = oldPayersMap.get(id);
+                const newAmount = newPayersMap.get(id);
+                const userName = getFullName(userMap.get(id)?.firstName, userMap.get(id)?.lastName) || 'A user';
+
+                if (oldAmount === undefined && newAmount !== undefined) {
+                    payerChanges.push(`added ${userName} who paid ${CURRENCY_SYMBOL}${newAmount.toFixed(2)}`);
+                } else if (oldAmount !== undefined && newAmount === undefined) {
+                    payerChanges.push(`removed ${userName} (who paid ${CURRENCY_SYMBOL}${oldAmount.toFixed(2)})`);
+                } else if (oldAmount !== newAmount) {
+                    payerChanges.push(`changed ${userName}'s payment from ${CURRENCY_SYMBOL}${oldAmount!.toFixed(2)} to ${CURRENCY_SYMBOL}${newAmount!.toFixed(2)}`);
+                }
+            });
+
+            if (payerChanges.length > 0) {
+                changes.push({ field: 'Payers', from: payerChanges.join('; '), to: '' });
                 changeSummaries.push('payers');
             }
-            
-            const oldParticipantsStr = JSON.stringify(oldData.participants.sort((a,b) => a.userId.localeCompare(b.userId)));
-            const newParticipantsStr = JSON.stringify(expenseData.participants.sort((a,b) => a.userId.localeCompare(b.userId)));
-            if (oldParticipantsStr !== newParticipantsStr) {
-                changes.push({ field: 'Split', from: 'Participant split was updated.', to: '' });
+
+            // Participants detailed changes
+            const oldParticipantsMap = new Map(oldData.participants.map(p => [p.userId, p.amountOwed]));
+            const newParticipantsMap = new Map(expenseData.participants.map(p => [p.userId, p.amountOwed]));
+            const allParticipantIds = new Set([...oldParticipantsMap.keys(), ...newParticipantsMap.keys()]);
+            const splitChanges: string[] = [];
+
+            allParticipantIds.forEach(id => {
+                const oldAmount = oldParticipantsMap.get(id);
+                const newAmount = newParticipantsMap.get(id);
+                
+                if (oldAmount === undefined && newAmount !== undefined) {
+                    const userName = getFullName(userMap.get(id)?.firstName, userMap.get(id)?.lastName) || 'A user';
+                    splitChanges.push(`added ${userName} to split (owes ${CURRENCY_SYMBOL}${newAmount.toFixed(2)})`);
+                } else if (oldAmount !== undefined && newAmount === undefined) {
+                    const userName = getFullName(userMap.get(id)?.firstName, userMap.get(id)?.lastName) || 'A user';
+                    splitChanges.push(`removed ${userName} from split (was owing ${CURRENCY_SYMBOL}${oldAmount.toFixed(2)})`);
+                } else if (oldAmount !== newAmount) {
+                    const userName = getFullName(userMap.get(id)?.firstName, userMap.get(id)?.lastName) || 'A user';
+                    splitChanges.push(`changed ${userName}'s share from ${CURRENCY_SYMBOL}${oldAmount!.toFixed(2)} to ${CURRENCY_SYMBOL}${newAmount!.toFixed(2)}`);
+                }
+            });
+
+            if (splitChanges.length > 0) {
+                changes.push({ field: 'Split', from: splitChanges.join('; '), to: '' });
                 changeSummaries.push('participant split');
             }
-        }
 
-        let description: string;
-        if (changeSummaries.length > 0) {
-            const uniqueSummaries = [...new Set(changeSummaries)];
-            const summaryText = uniqueSummaries.length > 2
-                ? `${uniqueSummaries.slice(0, 2).join(', ')} and other details`
-                : uniqueSummaries.join(' and ');
-            description = `${actorName} updated the ${summaryText} for expense "${oldData?.description}".`;
-        } else {
-            description = `${actorName} re-saved expense "${oldData?.description}" with no changes.`;
+            let description: string;
+            if (changeSummaries.length > 0) {
+                const uniqueSummaries = [...new Set(changeSummaries)];
+                const summaryText = uniqueSummaries.length > 2
+                    ? `${uniqueSummaries.slice(0, 2).join(', ')} and other details`
+                    : uniqueSummaries.join(' and ');
+                description = `${actorName} updated the ${summaryText} for expense "${oldData?.description}".`;
+                
+                await logHistoryEvent(expenseData.groupId, 'expense_updated', actorId, description, {
+                    expenseId,
+                    changes,
+                    date: expenseData.date,
+                });
+                
+                // Notification logic
+                const notifiedUserIds = new Set<string>([actorId]); // Don't notify the actor
+                const recipientIds = expenseData.participants.map(p => p.userId).filter(id => !notifiedUserIds.has(id));
+                if (recipientIds.length > 0) {
+                    await notifyExpenseUpdated(
+                        recipientIds,
+                        actorId,
+                        expenseData.groupId,
+                        expenseId,
+                        expenseData.description
+                    );
+                }
+            }
         }
-        
-        await logHistoryEvent(expenseData.groupId, 'expense_updated', actorId, description, {
-            expenseId,
-            changes,
-            date: expenseData.date,
-        });
-
     } catch (serverError) {
         const permissionError = new FirestorePermissionError({
             path: expenseDocRef.path,
@@ -574,6 +683,13 @@ export async function deleteExpense(expenseId: string, groupId: string, amount: 
     }
     
     await logHistoryEvent(groupId, 'expense_deleted', actorId, description, { ...deletedExpenseData, expenseId: expenseId, date: (deletedExpenseData.date as Timestamp)?.toDate() });
+
+    // Notification logic
+    const notifiedUserIds = new Set<string>([actorId]);
+    const recipientIds = deletedExpenseData.participantIds?.filter((id: string) => !notifiedUserIds.has(id)) || [];
+    if (recipientIds.length > 0) {
+        await notifyExpenseDeleted(recipientIds, actorId, groupId, deletedExpenseData.description);
+    }
 }
 
 
@@ -613,12 +729,12 @@ export async function getExpensesByGroupId(groupId: string): Promise<Expense[]> 
             
             const payers = (expenseData.payers || []).map(p => {
                 const user = userMap.get(p.userId);
-                return user ? { ...p, user } : null;
+                return user ? { ...p, user } as unknown as ExpensePayer : null;
             }).filter((p): p is ExpensePayer => p !== null);
             
             const participants = (expenseData.participants || []).map(p => {
                 const user = userMap.get(p.userId);
-                return user ? { ...p, user } : null;
+                return user ? { ...p, user } as unknown as ExpenseParticipant : null;
             }).filter((p): p is ExpenseParticipant => p !== null);
 
             const expenseCreator = userMap.get(expenseData.expenseCreatorId);
@@ -632,9 +748,9 @@ export async function getExpensesByGroupId(groupId: string): Promise<Expense[]> 
                 payers,
                 participants,
                 expenseCreator,
-            }
+            } as unknown as Expense;
         })
-    );
+    ) as unknown as Expense[];
      return expenses.filter((e): e is Expense => e !== null);
 }
 
@@ -673,12 +789,12 @@ export async function getExpensesByUserId(userId: string): Promise<Expense[]> {
 
         const payers = (expenseData.payers || []).map(p => {
                 const user = userMap.get(p.userId);
-                return user ? { ...p, user } : null;
+                return user ? { ...p, user } as unknown as ExpensePayer : null;
             }).filter((p): p is ExpensePayer => p !== null);
         
         const participants = (expenseData.participants || []).map((p) => {
             const user = userMap.get(p.userId);
-            return user ? { ...p, user } : null;
+            return user ? { ...p, user } as unknown as ExpenseParticipant : null;
         }).filter((p): p is ExpenseParticipant => p !== null);
         
         const expenseCreator = userMap.get(expenseData.expenseCreatorId);
@@ -689,12 +805,12 @@ export async function getExpensesByUserId(userId: string): Promise<Expense[]> {
             id: id,
             date: (expenseData.date as Timestamp).toDate().toISOString(),
             createdAt: (expenseData.createdAt as Timestamp)?.toDate().toISOString(),
-            payers,
-            participants,
+            payers: payers as unknown as ExpensePayer[],
+            participants: participants as unknown as ExpenseParticipant[],
             expenseCreator,
-        }
+        } as unknown as Expense;
     })
-  );
+  ) as unknown as Expense[];
   return expenses.filter((e): e is Expense => e !== null);
 }
 
@@ -717,12 +833,12 @@ export async function getAllExpenses(): Promise<Expense[]> {
   const expenses: Expense[] = expenseDocs.map((expenseData) => {
       const payers = (expenseData.payers || []).map(p => {
           const user = userMap.get(p.userId);
-          return user ? { ...p, user } : null;
+          return user ? { ...p, user } as unknown as ExpensePayer : null;
       }).filter((p): p is ExpensePayer => p !== null);
 
       const participants = (expenseData.participants || []).map(p => {
           const user = userMap.get(p.userId);
-          return user ? { ...p, user } : null;
+          return user ? { ...p, user } as unknown as ExpenseParticipant : null;
       }).filter((p): p is ExpenseParticipant => p !== null);
 
       const expenseCreator = userMap.get(expenseData.expenseCreatorId);
@@ -733,10 +849,10 @@ export async function getAllExpenses(): Promise<Expense[]> {
           id: expenseData.id,
           date: (expenseData.date as Timestamp).toDate().toISOString(),
           createdAt: (expenseData.createdAt as Timestamp)?.toDate().toISOString(),
-          payers,
-          participants,
+          payers: payers as unknown as ExpensePayer[],
+          participants: participants as unknown as ExpenseParticipant[],
           expenseCreator,
-      }
+      } as unknown as Expense;
   }).filter((e): e is Expense => e !== null);
   
   return expenses;
@@ -770,6 +886,16 @@ export async function addSettlement(settlementData: Omit<SettlementDocument, 'da
 
     const description = `${actorName} recorded a settlement: ${paidByName} paid ${paidToName} ${CURRENCY_SYMBOL}${settlementData.amount.toFixed(2)}.`;
     await logHistoryEvent(settlementData.groupId, 'settlement_created', actorId, description, { settlementId: docRef.id, date: settlementData.date });
+
+    // Notification Logic
+    if (settlementData.paidToId !== actorId) {
+        await notifySettlementAdded(
+            settlementData.paidToId,
+            actorId,
+            settlementData.groupId,
+            settlementData.amount
+        );
+    }
 
     return docRef.id;
 }
@@ -816,7 +942,7 @@ export async function getSettlementsByGroupId(groupId: string): Promise<Settleme
                 date: (settlementData.date as Timestamp).toDate().toISOString(),
                 paidBy,
                 paidTo
-            };
+            } as unknown as Settlement;
         }).filter((s): s is Settlement => s !== null);
 
     return settlements;
@@ -856,7 +982,7 @@ export async function getSettlementsByUserId(userId: string): Promise<Settlement
             date: (settlementData.date as Timestamp).toDate().toISOString(),
             paidBy,
             paidTo,
-        };
+        } as unknown as Settlement;
     }).filter((s): s is Settlement => s !== null);
 
     return settlements;
@@ -887,7 +1013,7 @@ export async function getAllSettlements(): Promise<Settlement[]> {
                 date: (settlementData.date as Timestamp).toDate().toISOString(),
                 paidBy,
                 paidTo,
-            };
+            } as unknown as Settlement;
         }).filter((s): s is Settlement => s !== null);
 
     return settlements;
@@ -906,7 +1032,7 @@ export async function updateSettlement(settlementId: string, data: Partial<Settl
     
     const updateData: {[key: string]: any} = { ...cleanData };
     if (data.date) {
-      updateData.date = Timestamp.fromDate(new Date(data.date as any));
+        updateData.date = Timestamp.fromDate(data.date as unknown as Date);
     }
 
     await updateDoc(settlementDocRef, updateData);
@@ -931,8 +1057,8 @@ export async function updateSettlement(settlementId: string, data: Partial<Settl
     if (data.paidToId && data.paidToId !== oldData.paidToId) {
         changes.push({ field: 'Recipient', from: getFullName(oldPaidTo?.firstName, oldPaidTo?.lastName), to: getFullName(newPaidTo?.firstName, newPaidTo?.lastName) });
     }
-    if (data.date && (data.date as Date).toISOString().split('T')[0] !== (oldData.date.toDate()).toISOString().split('T')[0]) {
-        changes.push({ field: 'Date', from: format(oldData.date.toDate(), 'PPP'), to: format(data.date as Date, 'PPP') });
+    if (data.date && (data.date as unknown as Date).toISOString().split('T')[0] !== (oldData.date.toDate()).toISOString().split('T')[0]) {
+        changes.push({ field: 'Date', from: format(oldData.date.toDate(), 'PPP'), to: format(data.date as unknown as Date, 'PPP') });
     }
     if (data.notes !== undefined && data.notes !== (oldData.notes || '')) {
          changes.push({ field: 'Notes', from: `"${oldData.notes || ''}"`, to: `"${data.notes || ''}"` });
@@ -1091,7 +1217,7 @@ export async function getHistoryByGroupId(groupId: string): Promise<HistoryEvent
       ...doc,
       timestamp: (doc.timestamp as Timestamp).toDate().toISOString(),
       actor,
-    };
+    } as unknown as HistoryEvent;
   }).filter((h): h is HistoryEvent => h !== null);
 
   return historyEvents;
@@ -1123,7 +1249,7 @@ export async function getHistoryForExpense(expenseId: string, groupId: string): 
         ...doc,
         timestamp: (doc.timestamp as Timestamp).toDate().toISOString(),
         actor,
-        };
+        } as unknown as HistoryEvent;
     }).filter((h): h is HistoryEvent => h !== null);
 
     return historyEvents;
@@ -1368,13 +1494,20 @@ const DEFAULT_EMAIL_TEMPLATES: SiteSettings['emailTemplates'] = {
     paymentReminder: { subject: 'Payment Reminder from {appName}', body: 'Hi {userName},\n\nThis is a friendly reminder that you have outstanding balances in one or more of your groups. Please log in to settle your debts.\n\nThanks,\nThe {appName} Team' },
     supportTicketConfirmation: { subject: 'Your Support Ticket has been Received', body: 'Hi {userName},\n\nThank you for reaching out. We have received your support ticket (ID: {ticketId}) and a member of our team will get back to you shortly.\n\nSubject: {ticketSubject}\n\nThanks,\nThe {appName} Team'},
     supportTicketAdminNotification: { subject: '[{appName} Support] New Ticket from {userName}', body: 'A new support ticket has been created.\n\nUser: {userName} ({userEmail})\nSubject: {ticketSubject}\nCategory: {ticketCategory}\n\nMessage: {ticketMessage}\n\nView ticket here: {ticketLink}'},
-    supportTicketReply: { subject: 'Re: Your Support Ticket #{ticketId}', body: 'Hi {userName},\n\nA reply has been added to your support ticket.\n\n{replyMessage}\n\nView the full conversation here: {ticketLink}\n\nThanks,\nThe {appName} Team'}
+    supportTicketReply: { subject: 'Re: Your Support Ticket #{ticketId}', body: 'Hi {userName},\n\nA reply has been added to your support ticket.\n\n{replyMessage}\n\nView the full conversation here: {ticketLink}\n\nThanks,\nThe {appName} Team'},
+    expenseAdded: { subject: 'New Expense Added in {groupName}', body: 'Hi {userName},\n\n{actorName} added a new expense "{description}" for {amount} in {groupName}.\n\nLog in to see details.\n\nThanks,\nThe {appName} Team' },
+    settlementAdded: { subject: 'Payment Received in {groupName}', body: 'Hi {userName},\n\n{actorName} recorded a payment of {amount} to you in {groupName}.\n\nLog in to see details.\n\nThanks,\nThe {appName} Team' },
+    memberAdded: { subject: 'You were added to {groupName}', body: 'Hi {userName},\n\nYou were added to the group "{groupName}" by {actorName}.\n\nLog in to start tracking shared expenses.\n\nThanks,\nThe {appName} Team' },
+    balanceReminder: { subject: 'Balance Reminder from {appName}', body: 'Hi {userName},\n\nYou have outstanding balances in your groups. Please log in to settle up.\n\nThanks,\nThe {appName} Team' },
+    broadcast: { subject: '{broadcastSubject}', body: '{broadcastBody}' },
 };
 
 const DEFAULT_EMAIL_SETTINGS = {
     sendingMethod: 'firebase' as 'firebase' | 'custom' | 'gmail',
     fromAddresses: {
         default: 'noreply@example.com',
+        auth: 'auth@example.com',
+        notifications: 'notifications@example.com',
         support: 'support@example.com',
         broadcast: 'broadcast@example.com',
     },
@@ -1389,6 +1522,8 @@ const DEFAULT_EMAIL_SETTINGS = {
         connectedEmail: '',
     }
 };
+
+
 
 async function getExpenseCategories(): Promise<Record<string, MasterCategory>> {
     const docRef = doc(db, SETTINGS_COLLECTION, EXPENSE_CATEGORIES_DOC);
@@ -1432,7 +1567,7 @@ export async function getSiteSettings(): Promise<SiteSettings> {
 
         const emailTemplates = { ...DEFAULT_EMAIL_TEMPLATES, ...(data.emailTemplates || {})};
         
-        // Merge fromAddresses carefully
+        // Merge fromAddresses carefully (new fields get defaults if missing)
         const defaultFrom = DEFAULT_EMAIL_SETTINGS.fromAddresses;
         const savedFrom = data.emailSettings?.fromAddresses || {};
         const fromAddresses = { ...defaultFrom, ...savedFrom };
@@ -1444,6 +1579,9 @@ export async function getSiteSettings(): Promise<SiteSettings> {
         if (data.emailSettings?.supportEmail && !savedFrom.support) {
             fromAddresses.support = data.emailSettings.supportEmail;
         }
+        // Backfill auth/notifications from default if not yet set
+        if (!fromAddresses.auth) fromAddresses.auth = fromAddresses.default;
+        if (!fromAddresses.notifications) fromAddresses.notifications = fromAddresses.default;
         
         const emailSettings = { 
             ...DEFAULT_EMAIL_SETTINGS, 
@@ -1560,14 +1698,16 @@ export async function getTicketsByUserId(userId: string): Promise<SupportTicket[
             };
         }).filter((m): m is SupportTicketMessage => m !== null);
 
-        return {
-            ...doc,
+        const { userId, assignedToId, createdAt, updatedAt, messages: _m, ...rest } = doc;
+        const ticket: SupportTicket = {
+            ...rest,
             createdAt: (doc.createdAt as Timestamp).toDate().toISOString(),
             updatedAt: (doc.updatedAt as Timestamp).toDate().toISOString(),
             user,
             assignedTo: doc.assignedToId ? userMap.get(doc.assignedToId) : undefined,
             messages,
-        }
+        } as unknown as SupportTicket;
+        return ticket;
     }).filter((t): t is SupportTicket => t !== null);
 
     return tickets;
@@ -1604,14 +1744,16 @@ export async function getAllTickets(): Promise<SupportTicket[]> {
             };
         }).filter((m): m is SupportTicketMessage => m !== null);
 
-        return {
-            ...doc,
+        const { userId, assignedToId, createdAt, updatedAt, messages: _m, ...rest } = doc;
+        const ticket: SupportTicket = {
+            ...rest,
             createdAt: (doc.createdAt as Timestamp).toDate().toISOString(),
             updatedAt: (doc.updatedAt as Timestamp).toDate().toISOString(),
             user,
             assignedTo: doc.assignedToId ? userMap.get(doc.assignedToId) : undefined,
             messages,
-        }
+        } as unknown as SupportTicket;
+        return ticket;
     }).filter((t): t is SupportTicket => t !== null);
 
     return tickets;
@@ -1628,25 +1770,70 @@ export async function updateTicket(ticketId: string, data: Partial<SupportTicket
     await updateDoc(ticketDocRef, updateData);
 }
 
-// --- Notification Functions ---
+// --- User Notification Preferences ---
 
-export async function getAllNotifications(): Promise<Notification[]> {
-    const notifsCol = collection(db, 'notifications');
+import type { UserNotificationPrefsDocument, NotificationV2, NotificationV2Document } from '@/types';
+
+const DEFAULT_USER_NOTIFICATION_PREFS: Omit<UserNotificationPrefsDocument, 'userId' | 'updatedAt'> = {
+  inAppEnabled: true,
+  pushEnabled: true,
+  emailEnabled: true,
+  events: {
+    expense_added: { inApp: true, push: true, email: false },
+    expense_updated: { inApp: true, push: false, email: false },
+    expense_deleted: { inApp: true, push: false, email: false },
+    settlement_added: { inApp: true, push: true, email: true },
+    member_added: { inApp: true, push: true, email: false },
+    member_removed: { inApp: true, push: false, email: false },
+    balance_reminder: { inApp: true, push: false, email: true },
+    support_reply: { inApp: true, push: true, email: true },
+    broadcast_announcement: { inApp: true, push: true, email: false },
+    broadcast_critical: { inApp: true, push: true, email: true },
+  }
+};
+
+export async function getUserNotificationPrefs(userId: string): Promise<UserNotificationPrefsDocument> {
+    const prefsDocRef = doc(db, 'user_notification_prefs', userId);
+    const prefsSnap = await getDoc(prefsDocRef);
+    if (prefsSnap.exists()) {
+        return prefsSnap.data() as UserNotificationPrefsDocument;
+    } else {
+        const defaultPrefs = {
+            userId,
+            ...DEFAULT_USER_NOTIFICATION_PREFS,
+            updatedAt: Timestamp.now(),
+        };
+        await setDoc(prefsDocRef, defaultPrefs);
+        return defaultPrefs;
+    }
+}
+
+export async function updateUserNotificationPrefs(userId: string, prefs: Partial<UserNotificationPrefsDocument>): Promise<void> {
+    const prefsDocRef = doc(db, 'user_notification_prefs', userId);
+    await updateDoc(prefsDocRef, { ...prefs, updatedAt: Timestamp.now() });
+}
+
+// --- Admin Notification Functions ---
+
+export async function getAllNotifications(): Promise<NotificationV2[]> {
+    const notifsCol = collection(db, 'notifications_v2');
     const notifSnapshot = await getDocs(query(notifsCol, orderBy('createdAt', 'desc')));
     
-    const notifications: Notification[] = notifSnapshot.docs.map(doc => {
-        const data = doc.data() as NotificationDocument;
+    const notifications: NotificationV2[] = notifSnapshot.docs.map(doc => {
+        const data = doc.data() as NotificationV2Document;
         return {
             id: doc.id,
             ...data,
             createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
-        } as Notification;
+            isRead: false,
+        } as NotificationV2;
     });
 
     return notifications;
 }
 
 export async function deleteNotification(notificationId: string): Promise<void> {
-    const notifDocRef = doc(db, 'notifications', notificationId);
+    const notifDocRef = doc(db, 'notifications_v2', notificationId);
     await deleteDoc(notifDocRef);
 }
+

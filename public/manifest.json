@@ -1,11 +1,12 @@
+
 {
-  "name": "SplitWise",
-  "short_name": "SplitWIse",
+  "name": "SplitIt",
+  "short_name": "SplitIt",
   "description": "Effortless Group Expense Management",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1a1a1a",
-  "theme_color": "#00c4cc",
+  "theme_color": "#00C4CC",
   "icons": [
     {
       "src": "/icons/icon-192x192.png",

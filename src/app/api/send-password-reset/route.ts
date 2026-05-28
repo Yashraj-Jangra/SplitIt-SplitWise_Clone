@@ -4,6 +4,7 @@ import { firebaseAdmin, getSiteSettingsAdmin } from '@/lib/firebase-admin';
 import nodemailer from 'nodemailer';
 import { getFullName } from '@/lib/utils';
 import { getAuth } from 'firebase-admin/auth';
+import { renderEmail } from '@/lib/email-templates/compiler';
 
 export async function POST(request: Request) {
     try {
@@ -30,26 +31,33 @@ export async function POST(request: Request) {
 
         // If custom SMTP is not configured, use Firebase's built-in email sender
         if (!emailSettings || (emailSettings.sendingMethod !== 'custom' && emailSettings.sendingMethod !== 'gmail')) {
-            await getAuth(firebaseAdmin).generatePasswordResetLink(email);
+            await getAuth(firebaseAdmin.app()).generatePasswordResetLink(email);
             return NextResponse.json({ success: true, message: 'Password reset email sent successfully via Firebase.' });
         }
         
-        // If using custom SMTP
-        const link = await getAuth(firebaseAdmin).generatePasswordResetLink(email);
+        // If using custom SMTP — generate the reset link
+        const link = await getAuth(firebaseAdmin.app()).generatePasswordResetLink(email);
         const template = emailTemplates?.forgotPassword;
 
         if (!template) {
              return NextResponse.json({ error: 'Forgot password email template is not configured.' }, { status: 500 });
         }
         
-        let subject = template.subject.replace(/{appName}/g, appName).replace(/{userName}/g, userName);
-        let body = template.body.replace(/{appName}/g, appName).replace(/{userName}/g, userName).replace(/{resetLink}/g, link);
+        const variables: Record<string, string> = {
+            appName,
+            userName,
+            resetLink: `[Reset My Password](${link})`,
+        };
 
         const { smtpSettings, fromAddresses } = emailSettings;
+
+        // Use the auth from-address specifically for authentication emails
+        const fromAddress = fromAddresses.auth || fromAddresses.default;
+
         const transporter = nodemailer.createTransport({
             host: smtpSettings.host,
             port: smtpSettings.port,
-            secure: smtpSettings.port === 465, // Use true for 465, false for other ports
+            secure: smtpSettings.port === 465,
             auth: {
                 user: smtpSettings.user,
                 pass: smtpSettings.pass,
@@ -58,12 +66,14 @@ export async function POST(request: Request) {
         
         await transporter.verify();
 
+        const subject = template.subject;
+        const html = renderEmail(template.body, variables, siteSettings, subject);
+
         const mailOptions = {
-            from: fromAddresses.default,
-            to: email, 
-            subject: subject,
-            text: body, // Basic text version
-            html: `<p>${body.replace(/\n/g, '<br>')}</p>`, // Simple HTML version
+            from: `"${appName}" <${fromAddress}>`,
+            to: email,
+            subject: subject.replace(/\{appName\}/g, appName).replace(/\{userName\}/g, userName),
+            html,
         };
 
         await transporter.sendMail(mailOptions);

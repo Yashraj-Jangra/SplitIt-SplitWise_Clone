@@ -95,7 +95,7 @@ export function UserNav() {
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={handleLogout} className="focus:text-destructive focus:bg-destructive/10">
+        <DropdownMenuItem onClick={handleLogout} className="focus:bg-destructive/20 focus:text-destructive">
           <Icons.Logout className="mr-2 h-4 w-4" />
           <span>Log out</span>
         </DropdownMenuItem>

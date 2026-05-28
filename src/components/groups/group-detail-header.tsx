@@ -1,4 +1,3 @@
-
 "use client";
 import type { Group, UserProfile } from "@/types";
 import { Icons } from "@/components/icons";
@@ -17,6 +16,7 @@ import { updateGroup, getSiteSettings } from "@/lib/mock-data";
 import { Skeleton } from "../ui/skeleton";
 import { cn } from "@/lib/utils";
 import { AddExpenseDialog } from "../expenses/add-expense-dialog";
+import { AddSettlementDialog } from "../settlements/add-settlement-dialog";
 
 
 interface GroupDetailHeaderProps {
@@ -112,9 +112,28 @@ export function GroupDetailHeader({ group, user, currentUserBalance }: GroupDeta
               <h1 className="text-2xl md:text-3xl font-bold font-headline drop-shadow-lg truncate">{group.name}</h1>
               <p className="text-sm text-slate-200 drop-shadow-md truncate">{group.description}</p>
             </div>
-            {/* Add Expense Button */}
+            {/* Action Buttons */}
             <div className="flex-shrink-0">
-                {!group.archivedAt && <AddExpenseDialog group={group} />}
+                {!group.archivedAt && (
+                    <div className="inline-flex rounded-md shadow-sm">
+                        <AddExpenseDialog
+                            group={group}
+                            trigger={
+                                <Button className="rounded-r-none border-r border-primary/70">
+                                    <Icons.Add className="mr-2 h-4 w-4" /> Add Expense
+                                </Button>
+                            }
+                        />
+                        <AddSettlementDialog
+                            group={group}
+                            trigger={
+                                <Button className="rounded-l-none">
+                                    <Icons.Settle className="mr-2 h-4 w-4" /> Settle
+                                </Button>
+                            }
+                        />
+                    </div>
+                )}
             </div>
           </div>
         </div>

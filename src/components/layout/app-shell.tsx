@@ -21,6 +21,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { SearchDialog } from "./search-dialog";
 import { NotificationBell } from "./notification-bell";
 import { BottomNavBar } from "./bottom-nav-bar";
+import { listenForForegroundMessages } from "@/lib/push-service";
 
 
 const mainNavItems: NavItem[] = [
@@ -114,7 +115,7 @@ function Sidebar({ isCollapsed, onToggle }: { isCollapsed: boolean; onToggle: ()
   const { settings, loading } = useSiteSettings();
 
   return (
-    <div className="hidden border-r bg-background md:block">
+    <div className="hidden border-r bg-background md:block z-40">
         <TooltipProvider>
             <div className="flex h-full max-h-screen flex-col gap-2 sticky top-0">
             <div className={cn(
@@ -244,10 +245,28 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const isMobile = useIsMobile();
   const [isCollapsed, setIsCollapsed] = React.useState(isMobile);
-  
+  const { toast } = useToast();
+  const { userProfile } = useAuth();
+
   React.useEffect(() => {
     setIsCollapsed(isMobile);
   }, [isMobile]);
+
+  // Listen for foreground FCM push messages and show them as toasts
+  React.useEffect(() => {
+    if (!userProfile) return;
+    let unsubscribe: (() => void) | undefined;
+
+    listenForForegroundMessages((title, body) => {
+      toast({ title, description: body });
+    }).then((fn) => {
+      unsubscribe = fn;
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [userProfile, toast]);
 
   const handleToggle = () => setIsCollapsed(prev => !prev);
 
@@ -256,7 +275,7 @@ export function AppShell({ children }: AppShellProps) {
         "grid min-h-screen w-full transition-[grid-template-columns] duration-300 ease-in-out",
         isCollapsed ? "md:grid-cols-[80px_1fr]" : "md:grid-cols-[280px_1fr]"
     )}>
-      <Sidebar isCollapsed={isCollapsed} onToggle={handleToggle} />
+      <Sidebar isCollapsed={!!isCollapsed} onToggle={handleToggle} />
        <div className="flex flex-col">
           <Header />
           <EmailVerificationBanner />
