@@ -8,18 +8,26 @@ import { sendVapidPush } from '@/lib/vapid-push';
 import { getSiteSettings } from '@/lib/services/settings.service';
 import { createNotification, getUserNotificationPrefs } from '@/lib/services/notification.service';
 import { getUserProfile } from '@/lib/services/user.service';
-import { queryByEntityType } from '@/lib/nosql';
+import { queryByEntityType, getItem } from '@/lib/nosql';
 
 export async function POST(request: Request) {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session?.user) {
-      return NextResponse.json({ error: 'Unauthorized: Missing or invalid token' }, { status: 401 });
-    }
-    const authUid = session.user.id;
-
     const body = await request.json();
-    const { type, recipientIds, title, body: notifBody, actorId, groupId, expenseId, settlementId, target = 'specific_users', imageUrl, balanceAmount, groupName } = body as {
+    const internalSecret = request.headers.get('x-internal-secret');
+    const isInternal = !!(internalSecret && process.env.INTERNAL_API_SECRET && internalSecret === process.env.INTERNAL_API_SECRET);
+
+    let authUid: string;
+    if (isInternal) {
+      authUid = body.actorId || 'system';
+    } else {
+      const session = await auth.api.getSession({ headers: request.headers });
+      if (!session?.user) {
+        return NextResponse.json({ error: 'Unauthorized: Missing or invalid token' }, { status: 401 });
+      }
+      authUid = session.user.id;
+    }
+
+    const { type, recipientIds, title, body: notifBody, actorId, groupId, expenseId, settlementId, target = 'specific_users', imageUrl, balanceAmount, groupName, upiUrl, actionUrl, forceEmail, amount, description } = body as {
       type: NotificationEventType;
       recipientIds: string[];
       title: string;
@@ -32,7 +40,11 @@ export async function POST(request: Request) {
       imageUrl?: string;
       balanceAmount?: string;
       groupName?: string;
+      upiUrl?: string;
+      actionUrl?: string;
       forceEmail?: boolean;
+      amount?: number;
+      description?: string;
     };
 
     if (!type || !title || !notifBody || !recipientIds) {
@@ -94,8 +106,9 @@ export async function POST(request: Request) {
     }
 
     // 3. Write In-App Notification to Oracle Autonomous DB
+    let notificationId = `notif_local_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
     if (inAppRecipients.length > 0 || target === 'all_users') {
-      await createNotification({
+      notificationId = await createNotification({
         type,
         title,
         body: notifBody,
@@ -116,6 +129,26 @@ export async function POST(request: Request) {
       const allPushSubs = await queryByEntityType<any>('PUSH_SUB');
       const subscriptions = allPushSubs.filter(s => targetUserIdsForPush.includes(s.userId));
 
+      // Build server-side deep link URL matching notification-utils mapping logic
+      let destinationUrl = '/dashboard';
+      if (type === 'monthly_summary') {
+        destinationUrl = '/analysis';
+      } else if (type === 'support_reply') {
+        destinationUrl = '/support';
+      } else if (type.startsWith('broadcast')) {
+        destinationUrl = '/notifications';
+      } else if (groupId) {
+        if (type === 'payment_reminder') {
+          destinationUrl = `/groups/${groupId}?settlementId=${settlementId || ''}&action=settle`;
+        } else if (expenseId && (type === 'expense_added' || type === 'expense_updated')) {
+          destinationUrl = `/groups/${groupId}?expenseId=${expenseId}&action=view`;
+        } else if (settlementId && (type === 'settlement_added' || type === 'payment_confirmation_request')) {
+          destinationUrl = `/groups/${groupId}?settlementId=${settlementId}&action=view`;
+        } else {
+          destinationUrl = `/groups/${groupId}`;
+        }
+      }
+
       const pushPayload = {
         title,
         body: notifBody,
@@ -124,7 +157,9 @@ export async function POST(request: Request) {
           groupId: groupId || '',
           expenseId: expenseId || '',
           settlementId: settlementId || '',
-          url: groupId ? `/groups/${groupId}` : '/'
+          notificationId,
+          url: destinationUrl,
+          markReadUrl: `/api/notifications/${notificationId}/read`
         }
       };
 
@@ -146,28 +181,123 @@ export async function POST(request: Request) {
       const appName = settings.appName || 'SplitIt';
       const fromAddress = emailSettings?.fromAddresses?.notifications || emailSettings?.fromAddresses?.default || 'notifications@splitit.app';
 
+      const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3231';
+
+      // 5.1 Resolve actor and group names for richer email templates
+      let actorName = 'A group member';
+      if (actorId) {
+        try {
+          const actorProfile = await getUserProfile(actorId);
+          if (actorProfile) {
+            actorName = `${actorProfile.firstName} ${actorProfile.lastName || ''}`.trim();
+          }
+        } catch (e) {
+          console.error('Failed to load actor profile:', e);
+        }
+      }
+
+      let resolvedGroupName = groupName || '';
+      if (groupId && !resolvedGroupName) {
+        try {
+          const groupDoc = await getItem<any>(`GROUP#${groupId}`, 'METADATA');
+          if (groupDoc) {
+            resolvedGroupName = groupDoc.name;
+          }
+        } catch (e) {
+          console.error('Failed to load group metadata:', e);
+        }
+      }
+
       for (const u of usersToEmail) {
         try {
+          let httpUpiUrl = upiUrl;
+          if (upiUrl && upiUrl.startsWith('upi://')) {
+            try {
+              const parsed = new URL(upiUrl);
+              const pa = parsed.searchParams.get('pa') || '';
+              const pn = parsed.searchParams.get('pn') || '';
+              const am = parsed.searchParams.get('am') || '';
+              httpUpiUrl = `${appBaseUrl}/api/pay-upi?pa=${encodeURIComponent(pa)}&pn=${encodeURIComponent(pn)}&am=${encodeURIComponent(am)}`;
+            } catch (e) {
+              httpUpiUrl = upiUrl;
+            }
+          }
+
+          // Customize email subject and body dynamically per event type
+          let emailSubject = `${title} - ${appName}`;
+          let emailBodyText = notifBody;
+
+          const formattedAmount = amount !== undefined ? `₹${Number(amount).toFixed(2)}` : '';
+
+          switch (type) {
+            case 'expense_added':
+              emailSubject = `💸 New Expense: ${description || 'Expense'} in ${resolvedGroupName || 'Group'}`;
+              emailBodyText = `${actorName} added a new expense **"${description || 'Expense'}"** in group **"${resolvedGroupName || 'Group'}"**.\n\n**Amount**: ${formattedAmount}\n\nSplit details and options can be viewed inside the app.`;
+              break;
+            case 'expense_updated':
+              emailSubject = `📝 Expense Updated: ${description || 'Expense'} in ${resolvedGroupName || 'Group'}`;
+              emailBodyText = `${actorName} updated the details of the expense **"${description || 'Expense'}"** in group **"${resolvedGroupName || 'Group'}"**.`;
+              break;
+            case 'expense_deleted':
+              emailSubject = `🗑️ Expense Deleted: ${description || 'Expense'} in ${resolvedGroupName || 'Group'}`;
+              emailBodyText = `${actorName} deleted the expense **"${description || 'Expense'}"** from group **"${resolvedGroupName || 'Group'}"**.`;
+              break;
+            case 'settlement_added':
+              emailSubject = `🤝 Payment Received in ${resolvedGroupName || 'Group'}`;
+              emailBodyText = `${actorName} paid you **${formattedAmount}** as a settlement in group **"${resolvedGroupName || 'Group'}"**.\n\nThank you for keeping your balances clean!`;
+              break;
+            case 'member_added':
+              emailSubject = `👥 Added to Group: ${resolvedGroupName || 'Group'}`;
+              emailBodyText = `${actorName} added you to the group **"${resolvedGroupName || 'Group'}"**.`;
+              break;
+            case 'member_removed':
+              emailSubject = `👋 Removed from Group: ${resolvedGroupName || 'Group'}`;
+              emailBodyText = `${actorName} removed you from the group **"${resolvedGroupName || 'Group'}"**.`;
+              break;
+            case 'balance_reminder':
+              emailSubject = `📊 Balance Reminder for ${resolvedGroupName || 'Group'}`;
+              emailBodyText = `Here is a friendly update of your outstanding balances in group **"${resolvedGroupName || 'Group'}"**.`;
+              break;
+            case 'monthly_summary':
+              emailSubject = `📊 Your Monthly Spending Summary - ${appName}`;
+              emailBodyText = notifBody;
+              break;
+            case 'group_inactivity':
+              emailSubject = `😴 Dormant Group: Keep splitting with "${resolvedGroupName || 'Group'}"!`;
+              emailBodyText = notifBody;
+              break;
+          }
+
+          const mailBodyWithUpi = httpUpiUrl
+            ? `${emailBodyText}\n\n[⚡ Pay via UPI App (GPay / PhonePe / Paytm)](${httpUpiUrl})`
+            : emailBodyText;
+
+          const targetActionUrl = actionUrl 
+            ? `${appBaseUrl}${actionUrl}`
+            : groupId 
+              ? `${appBaseUrl}/groups/${groupId}` 
+              : appBaseUrl;
+
           const htmlContent = renderEmail(
-            notifBody,
+            mailBodyWithUpi,
             {
               userName: u.name,
               appName,
-              actionUrl: groupId ? `${process.env.NEXT_PUBLIC_APP_URL || ''}/groups/${groupId}` : (process.env.NEXT_PUBLIC_APP_URL || ''),
-              title,
-              bodyText: notifBody,
-              balanceAmount: balanceAmount || '',
-              groupName: groupName || '',
+              actionUrl: targetActionUrl,
+              title: emailSubject,
+              bodyText: mailBodyWithUpi,
+              balanceAmount: balanceAmount || formattedAmount || '',
+              groupName: resolvedGroupName || '',
             },
             settings,
-            title
+            emailSubject
           );
 
           if (emailSettings?.sendingMethod === 'gmail' && emailSettings?.gmailSettings?.refreshToken) {
             await sendEmailViaGmail({
               to: u.email,
-              subject: `${title} - ${appName}`,
-              text: notifBody,
+              subject: emailSubject,
+              text: emailBodyText,
               html: htmlContent,
               fromAddress,
               refreshToken: emailSettings.gmailSettings.refreshToken
@@ -176,8 +306,8 @@ export async function POST(request: Request) {
             await transporter.sendMail({
               from: `"${appName}" <${fromAddress}>`,
               to: u.email,
-              subject: `${title} - ${appName}`,
-              text: notifBody,
+              subject: emailSubject,
+              text: emailBodyText,
               html: htmlContent
             });
           }

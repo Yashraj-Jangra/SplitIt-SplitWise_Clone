@@ -48,43 +48,6 @@ function DashboardSkeleton() {
     );
 }
 
-async function getOverallBalances(userId: string): Promise<Balance[]> {
-    const userGroups = await getGroupsByUserId(userId);
-    if (userGroups.length === 0) return [];
-
-    // 1. Get all balances for each group
-    const allGroupBalancesPromises = userGroups.map(group => getGroupBalances(group.id));
-    const allGroupBalancesArrays = await Promise.all(allGroupBalancesPromises);
-
-    // 2. Simplify debts for each group to get P2P transactions
-    const allSettlements: SimplifiedSettlement[] = allGroupBalancesArrays
-        .map(groupBalances => simplifyDebts(groupBalances))
-        .flat();
-
-    // 3. Aggregate P2P transactions to find net balance with each person
-    const userP2PBalanceMap = new Map<string, { user: UserProfile, netBalance: number }>();
-
-    allSettlements.forEach(settlement => {
-        // If I am the one who needs to pay
-        if (settlement.from.uid === userId) {
-            const otherUser = settlement.to;
-            const existing = userP2PBalanceMap.get(otherUser.uid) || { user: otherUser, netBalance: 0 };
-            // I owe them, so my debt to them is a positive value in this context
-            existing.netBalance += settlement.amount;
-            userP2PBalanceMap.set(otherUser.uid, existing);
-        }
-        // If I am the one who should receive money
-        else if (settlement.to.uid === userId) {
-            const otherUser = settlement.from;
-            const existing = userP2PBalanceMap.get(otherUser.uid) || { user: otherUser, netBalance: 0 };
-            // They owe me, so my "debt" to them is negative (i.e., they owe me)
-            existing.netBalance -= settlement.amount;
-            userP2PBalanceMap.set(otherUser.uid, existing);
-        }
-    });
-
-    return Array.from(userP2PBalanceMap.values());
-}
 
 
 export default function DashboardPage() {
@@ -98,11 +61,37 @@ export default function DashboardPage() {
     
     setDataLoading(true);
     try {
-        const [expenses, settlements, balances] = await Promise.all([
+        const [expenses, settlements, groups] = await Promise.all([
             getExpensesByUserId(userProfile.uid),
             getSettlementsByUserId(userProfile.uid),
-            getOverallBalances(userProfile.uid)
+            getGroupsByUserId(userProfile.uid),
         ]);
+
+        const groupBalancesArrays = await Promise.all(groups.map(g => getGroupBalances(g.id)));
+
+        const userP2PBalanceMap = new Map<string, { user: UserProfile; netBalance: number }>();
+
+        groupBalancesArrays.forEach(groupBalances => {
+          const simplified = simplifyDebts(groupBalances);
+          simplified.forEach(settlement => {
+            if (settlement.from.uid === userProfile.uid) {
+              const otherUser = settlement.to;
+              const existing = userP2PBalanceMap.get(otherUser.uid) || { user: otherUser, netBalance: 0 };
+              existing.netBalance -= settlement.amount;
+              userP2PBalanceMap.set(otherUser.uid, existing);
+            } else if (settlement.to.uid === userProfile.uid) {
+              const otherUser = settlement.from;
+              const existing = userP2PBalanceMap.get(otherUser.uid) || { user: otherUser, netBalance: 0 };
+              existing.netBalance += settlement.amount;
+              userP2PBalanceMap.set(otherUser.uid, existing);
+            }
+          });
+        });
+
+        const balances: Balance[] = Array.from(userP2PBalanceMap.values())
+          .map(b => ({ user: b.user, netBalance: parseFloat(b.netBalance.toFixed(2)) }))
+          .filter(b => Math.abs(b.netBalance) >= 0.01);
+
         setDashboardData({ expenses, settlements, balances });
     } catch (error) {
         console.error("Failed to load dashboard data:", error);

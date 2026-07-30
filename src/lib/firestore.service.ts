@@ -1,17 +1,40 @@
 import type { UserProfile, Group, Expense, Settlement, Balance, HistoryEvent, SiteSettings, UserNotificationPrefsDocument } from '@/types';
 
+// Client-side GET request cache (5 seconds)
+const clientFetchCache = new Map<string, { timestamp: number; data: any }>();
+const CLIENT_CACHE_TTL_MS = 5000;
+
+export function clearClientFetchCache() {
+  clientFetchCache.clear();
+}
+
 // Helper for making fetch requests — resolves relative URLs on the server
 async function fetchApi(url: string, options?: RequestInit) {
+  const isGet = !options?.method || options.method.toUpperCase() === 'GET';
   const base = typeof window === 'undefined'
     ? (process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3231')
     : '';
   const fullUrl = url.startsWith('/') ? `${base}${url}` : url;
+
+  if (!isGet) {
+    clearClientFetchCache();
+  } else if (typeof window !== 'undefined') {
+    const cached = clientFetchCache.get(fullUrl);
+    if (cached && Date.now() - cached.timestamp < CLIENT_CACHE_TTL_MS) {
+      return cached.data;
+    }
+  }
+
   const res = await fetch(fullUrl, options);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `HTTP error! status: ${res.status}`);
   }
-  return res.json();
+  const data = await res.json();
+  if (isGet && typeof window !== 'undefined') {
+    clientFetchCache.set(fullUrl, { timestamp: Date.now(), data });
+  }
+  return data;
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
@@ -35,10 +58,31 @@ export async function updateUser(userId: string, data: Partial<UserProfile>): Pr
   const response = await fetchApi('/api/user/profile', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ ...data, userId }),
   });
-  // API returns { success: true, profile } — extract the profile
   return (response as any).profile ?? response;
+}
+
+export async function deleteUser(userId: string): Promise<void> {
+  await fetchApi(`/api/admin/users?userId=${userId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function deleteUsersMass(userIds: string[]): Promise<void> {
+  await fetchApi('/api/admin/users', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userIds }),
+  });
+}
+
+export async function updateUserRoleMass(userIds: string[], role: 'admin' | 'user'): Promise<void> {
+  await fetchApi('/api/admin/users', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userIds, role }),
+  });
 }
 
 export async function hydrateUsers(uids: string[]): Promise<UserProfile[]> {

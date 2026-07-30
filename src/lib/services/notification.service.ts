@@ -63,7 +63,11 @@ export async function getNotificationsForUser(userId: string, limit: number = 50
     return recipientIds.includes(userId);
   });
 
-  userNotifs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  userNotifs.sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+  });
   const limited = userNotifs.slice(0, limit);
 
   const actorIds = [...new Set(limited.map(r => r.actorId).filter(Boolean) as string[])];
@@ -130,7 +134,11 @@ export async function markAllRead(userId: string): Promise<void> {
 
 export async function getAllNotifications(): Promise<NotificationV2[]> {
   const allNotifs = await queryByEntityType<any>('NOTIFICATION');
-  allNotifs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  allNotifs.sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+  });
   return allNotifs.map(r => mapNotificationRow(r, false));
 }
 
@@ -144,19 +152,22 @@ const DEFAULT_USER_NOTIFICATION_PREFS = {
   emailEnabled: true,
   events: {
     expense_added: { inApp: true, push: true, email: false },
-    expense_updated: { inApp: true, push: false, email: false },
-    expense_deleted: { inApp: true, push: false, email: false },
+    expense_updated: { inApp: true, push: true, email: false },
+    expense_deleted: { inApp: true, push: true, email: false },
     settlement_added: { inApp: true, push: true, email: true },
     member_added: { inApp: true, push: true, email: false },
-    member_removed: { inApp: true, push: false, email: false },
-    balance_reminder: { inApp: true, push: false, email: true },
+    member_removed: { inApp: true, push: true, email: false },
+    balance_reminder: { inApp: true, push: true, email: true },
     payment_reminder: { inApp: true, push: true, email: true },
     payment_confirmation_request: { inApp: true, push: true, email: true },
     support_reply: { inApp: true, push: true, email: true },
     broadcast_announcement: { inApp: true, push: true, email: false },
     broadcast_critical: { inApp: true, push: true, email: true },
+    monthly_summary: { inApp: true, push: true, email: true },
+    group_inactivity: { inApp: true, push: true, email: false },
   }
 };
+
 
 export async function getUserNotificationPrefs(userId: string): Promise<UserNotificationPrefsDocument> {
   const prefsDoc = await getItem<any>(`USER#${userId}`, 'NOTIFICATION_PREFS');

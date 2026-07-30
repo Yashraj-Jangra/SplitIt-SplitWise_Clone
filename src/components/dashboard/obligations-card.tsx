@@ -41,16 +41,16 @@ export function ObligationsCard({ balances, type }: ObligationsCardProps) {
         let obligationList: Obligation[] = [];
 
         if (type === 'owed') {
-            // You are owed -> other people's balance is negative
-            obligationList = balances
-                .filter(b => b.netBalance < -0.01)
-                .map(b => ({ user: b.user, amount: Math.abs(b.netBalance) }));
-            totalAmount = obligationList.reduce((sum, item) => sum + item.amount, 0);
-        } else {
-            // You owe -> other people's balance is positive
+            // You are owed -> other people's net balance is positive (> 0.01)
             obligationList = balances
                 .filter(b => b.netBalance > 0.01)
                 .map(b => ({ user: b.user, amount: b.netBalance }));
+            totalAmount = obligationList.reduce((sum, item) => sum + item.amount, 0);
+        } else {
+            // You owe -> other people's net balance is negative (< -0.01)
+            obligationList = balances
+                .filter(b => b.netBalance < -0.01)
+                .map(b => ({ user: b.user, amount: Math.abs(b.netBalance) }));
             totalAmount = obligationList.reduce((sum, item) => sum + item.amount, 0);
         }
 
@@ -106,7 +106,9 @@ export function ObligationsCard({ balances, type }: ObligationsCardProps) {
                 mainGroupId,
                 mainGroupName,
                 obligation.amount,
-                sendEmail
+                sendEmail,
+                userProfile.upiId,
+                getFullName(userProfile.firstName, userProfile.lastName)
             );
 
             toast({
@@ -162,7 +164,9 @@ export function ObligationsCard({ balances, type }: ObligationsCardProps) {
                         mainGroupId,
                         mainGroupName,
                         obligation.amount,
-                        sendEmail
+                        sendEmail,
+                        userProfile.upiId,
+                        getFullName(userProfile.firstName, userProfile.lastName)
                     );
                     successCount++;
                 } catch (e) {

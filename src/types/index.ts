@@ -13,7 +13,9 @@ export type NotificationEventType =
   | 'payment_confirmation_request'
   | 'support_reply'
   | 'broadcast_announcement'
-  | 'broadcast_critical';
+  | 'broadcast_critical'
+  | 'monthly_summary'
+  | 'group_inactivity';
 
 export type NotificationChannel = 'in_app' | 'push' | 'email';
 
@@ -40,6 +42,7 @@ export interface GroupDocument {
   description?: string;
   memberIds: string[]; // Array of user uids
   createdAt: Date;
+  updatedAt?: Date;
   createdById: string; // user uid
   totalExpenses: number;
   coverImageUrl?: string;
@@ -168,11 +171,12 @@ export interface PushSubscriptionDocument {
 // --- Hydrated Types for Client-side Usage ---
 // These types include the full nested objects for easier display
 
-export interface Group extends Omit<GroupDocument, 'memberIds' | 'createdById' | 'createdAt' | 'archivedAt'> {
+export interface Group extends Omit<GroupDocument, 'memberIds' | 'createdById' | 'createdAt' | 'archivedAt' | 'updatedAt'> {
   id: string; // The document ID
   members: UserProfile[];
   createdBy: UserProfile;
   createdAt: string; // ISO string for client
+  updatedAt?: string;
   archivedAt?: string;
 }
 

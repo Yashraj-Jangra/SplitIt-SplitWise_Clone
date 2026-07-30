@@ -10,6 +10,8 @@ export interface DispatchNotificationParams {
   expenseId?: string;
   settlementId?: string;
   target?: 'all_users' | 'specific_users' | 'group';
+  amount?: number;
+  description?: string;
 }
 
 export async function dispatchNotification(params: DispatchNotificationParams): Promise<void> {
@@ -17,17 +19,72 @@ export async function dispatchNotification(params: DispatchNotificationParams): 
     ? (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3231')
     : '';
 
-  const response = await fetch(`${baseUrl}/api/notifications/send`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(params),
-  });
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (typeof window === 'undefined' && process.env.INTERNAL_API_SECRET) {
+    headers['x-internal-secret'] = process.env.INTERNAL_API_SECRET;
+  }
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    console.error('Failed to dispatch notification:', errorData);
+  const bodyString = JSON.stringify(params);
+
+  try {
+    let ok = false;
+    let errorData = {};
+
+    if (typeof window === 'undefined') {
+      // Use native Node.js HTTP/HTTPS to bypass Next.js patched fetch header-forwarding bugs
+      const { URL } = eval("require('url')");
+      const parsedUrl = new URL(`${baseUrl}/api/notifications/send`);
+      const protocol = parsedUrl.protocol === 'https:' ? eval("require('https')") : eval("require('http')");
+      const port = parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80);
+
+      const res = await new Promise<{ statusCode: number; data: string }>((resolve, reject) => {
+        const req = protocol.request({
+          hostname: parsedUrl.hostname,
+          port,
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: 'POST',
+          headers: {
+            ...headers,
+            'Content-Length': Buffer.byteLength(bodyString),
+          }
+        }, (response: any) => {
+          let data = '';
+          response.on('data', (chunk: any) => { data += chunk; });
+          response.on('end', () => {
+            resolve({ statusCode: response.statusCode || 200, data });
+          });
+        });
+
+        req.on('error', (err: any) => reject(err));
+        req.write(bodyString);
+        req.end();
+      });
+
+      ok = res.statusCode >= 200 && res.statusCode < 300;
+      if (!ok) {
+        try {
+          errorData = JSON.parse(res.data);
+        } catch (_) {}
+      }
+    } else {
+      const response = await fetch(`${baseUrl}/api/notifications/send`, {
+        method: 'POST',
+        headers,
+        body: bodyString,
+      });
+      ok = response.ok;
+      if (!ok) {
+        errorData = await response.json().catch(() => ({}));
+      }
+    }
+
+    if (!ok) {
+      console.error('Failed to dispatch notification:', errorData);
+    }
+  } catch (error) {
+    console.error('Error dispatching notification:', error);
   }
 }
 
@@ -48,7 +105,9 @@ export const notifyExpenseAdded = async (
         actorId,
         groupId,
         expenseId,
-        target: 'group'
+        target: 'group',
+        amount,
+        description
     });
 };
 
@@ -67,7 +126,8 @@ export const notifyExpenseUpdated = async (
         actorId,
         groupId,
         expenseId,
-        target: 'group'
+        target: 'group',
+        description
     });
 };
 
@@ -84,7 +144,8 @@ export const notifyExpenseDeleted = async (
         body: `The expense "${description}" was deleted.`,
         actorId,
         groupId,
-        target: 'group'
+        target: 'group',
+        description
     });
 };
 
@@ -93,17 +154,24 @@ export const notifySettlementAdded = async (
     actorId: string, 
     groupId: string, 
     amount: number,
-    settlementId?: string
+    settlementId?: string,
+    groupName?: string
 ) => {
     await dispatchNotification({
         type: 'settlement_added',
         recipientIds: [recipientId],
         title: 'Payment Received',
-        body: `You received a payment of ${amount}.`,
+        body: `You received a payment of ₹${Number(amount || 0).toFixed(2)}${groupName ? ` in "${groupName}"` : ''}.`,
         actorId,
         groupId,
         settlementId,
-        target: 'specific_users'
+        target: 'specific_users',
+        amount,
+        ...({
+            balanceAmount: `₹${Number(amount || 0).toFixed(2)}`,
+            groupName: groupName || '',
+            actionUrl: `/groups/${groupId}`
+        } as any)
     });
 };
 
@@ -179,44 +247,36 @@ export const notifyPaymentReminder = async (
     groupId: string | undefined, 
     groupName: string | undefined,
     balanceAmount: number,
-    forceEmail: boolean = false
+    forceEmail: boolean = false,
+    actorUpiId?: string,
+    actorName?: string
 ) => {
+    const upiUri = actorUpiId 
+        ? `upi://pay?pa=${encodeURIComponent(actorUpiId)}&pn=${encodeURIComponent(actorName || 'Payee')}&am=${Number(balanceAmount || 0).toFixed(2)}&cu=INR&tn=${encodeURIComponent('SplitWise Settlement')}` 
+        : undefined;
+
+    const disclaimer = "Note: You'll need to update it manually in Splitwise that the amount is paid, because we don't directly receive or track payments and it is a free platform with zero usage fee.";
+
+    const actionUrl = `/dashboard?action=settle&to=${actorId}&amount=${Number(balanceAmount || 0).toFixed(2)}${groupId ? `&groupId=${groupId}` : ''}`;
+
     await dispatchNotification({
         type: 'payment_reminder',
         recipientIds: [recipientId],
         title: 'Settle Up Reminder',
-        body: `Friendly reminder to settle up your outstanding balance of $${balanceAmount.toFixed(2)}${groupName ? ` in "${groupName}"` : ''}.`,
+        body: `A member is asking you to settle up ₹${Number(balanceAmount || 0).toFixed(2)}${groupName ? ` in "${groupName}"` : ''}.\n\n${disclaimer}`,
         actorId,
         groupId,
         target: 'specific_users',
         ...({
-            balanceAmount: `$${balanceAmount.toFixed(2)}`,
+            balanceAmount: `₹${Number(balanceAmount || 0).toFixed(2)}`,
             groupName: groupName || 'your group',
+            upiUrl: upiUri,
+            actionUrl,
+            disclaimer,
             forceEmail
         } as any)
     });
 };
 
-export const notifyPaymentConfirmationRequest = async (
-    actorId: string,
-    recipientId: string,
-    amount: number,
-    groupId?: string,
-    groupName?: string
-) => {
-    await dispatchNotification({
-        type: 'payment_confirmation_request',
-        recipientIds: [recipientId],
-        title: 'UPI Payment Confirmation Request',
-        body: `A member marked ₹${Number(amount || 0).toFixed(2)} as paid via UPI. Please confirm receipt to auto-record this settlement.`,
-        actorId,
-        groupId,
-        target: 'specific_users',
-        ...({
-            amount: `₹${Number(amount || 0).toFixed(2)}`,
-            groupName: groupName || 'Shared Expenses',
-            forceEmail: true
-        } as any)
-    });
-};
+
 
