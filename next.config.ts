@@ -1,5 +1,5 @@
 
-import type {NextConfig} from 'next';
+import type { NextConfig } from 'next';
 // @ts-expect-error next-pwa lacks type definitions
 import withPWA from 'next-pwa';
 
@@ -16,6 +16,12 @@ const nextConfig: NextConfig = {
   /* config options here */
   images: {
     remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '**.cvweb.qzz.io',
+        port: '',
+        pathname: '/**',
+      },
       {
         protocol: 'https',
         hostname: 'placehold.co',
@@ -41,6 +47,12 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       },
       {
+        protocol: 'http',
+        hostname: '141.148.222.255',
+        port: '7777',
+        pathname: '/**',
+      },
+      {
         protocol: 'https',
         hostname: 'cdn.cvweb.tech',
         port: '',
@@ -55,12 +67,6 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'github.com',
-        port: '',
-        pathname: '/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'firebasestorage.googleapis.com',
         port: '',
         pathname: '/**',
       },

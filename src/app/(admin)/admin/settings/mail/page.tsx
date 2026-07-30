@@ -22,7 +22,34 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from '@/components/ui/badge';
+import {
+  ShieldAlert,
+  Mail,
+  Key,
+  UserCheck,
+  DollarSign,
+  CheckCircle2,
+  UserPlus,
+  Clock,
+  Bell,
+  FileText,
+  MessageSquare,
+  Megaphone,
+  Server,
+  Settings2,
+  Check,
+  Send,
+  AlertTriangle,
+  BarChart3
+} from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth } from '@/contexts/auth-context';
 
@@ -54,10 +81,26 @@ const templatePlaceholders: Partial<Record<EmailTemplateName, string[]>> = {
 
 const templateGroups = [
   { label: 'Auth & Account', templates: ['registration', 'forgotPassword', 'loginNotification'] },
-  { label: 'Expenses & Groups', templates: ['expenseAdded', 'settlementAdded', 'memberAdded', 'balanceReminder'] },
+  { label: 'Expenses & Groups', templates: ['expenseAdded', 'settlementAdded', 'memberAdded', 'balanceReminder', 'paymentReminder'] },
   { label: 'Support', templates: ['supportTicketConfirmation', 'supportTicketReply', 'supportTicketAdminNotification'] },
   { label: 'Broadcast', templates: ['broadcast'] },
 ];
+
+const templateIcons: Record<EmailTemplateName, React.ComponentType<any>> = {
+  registration: UserPlus,
+  forgotPassword: Key,
+  loginNotification: ShieldAlert,
+  monthlyReport: BarChart3,
+  expenseAdded: DollarSign,
+  settlementAdded: CheckCircle2,
+  memberAdded: UserCheck,
+  balanceReminder: Clock,
+  paymentReminder: Bell,
+  supportTicketConfirmation: FileText,
+  supportTicketReply: MessageSquare,
+  supportTicketAdminNotification: AlertTriangle,
+  broadcast: Megaphone,
+};
 
 export default function AdminMailSettingsPage() {
   const [settings, setSettings] = useState<SiteSettings | null>(null);
@@ -73,6 +116,23 @@ export default function AdminMailSettingsPage() {
       try {
         const siteSettings = await getSiteSettings();
         setSettings(siteSettings);
+
+        // Listen for Gmail OAuth redirect results
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('success') === 'gmail') {
+          toast({
+            title: "Gmail Connected",
+            description: "Successfully authenticated Gmail API connection and retrieved verified sending aliases.",
+          });
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (urlParams.get('error')) {
+          toast({
+            variant: "destructive",
+            title: "Connection Failed",
+            description: `Could not connect to Gmail API: ${urlParams.get('details') || urlParams.get('error')}`,
+          });
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
       } catch (error) {
         toast({ variant: 'destructive', title: 'Error', description: 'Could not load site settings.' });
       } finally {
@@ -84,32 +144,73 @@ export default function AdminMailSettingsPage() {
 
   const handleEmailSettingsChange = (field: string, value: any) => {
     if (!settings) return;
-    setSettings(prev => prev ? ({ ...prev, emailSettings: { ...prev.emailSettings!, [field]: value } }) : null);
+    const currentEmailSettings = settings.emailSettings || {
+      sendingMethod: 'custom',
+      fromAddresses: { default: '', auth: '', notifications: '', support: '', broadcast: '' },
+      smtpSettings: { host: '', port: 587, user: '', pass: '', secure: false },
+    };
+    setSettings(prev => prev ? ({ ...prev, emailSettings: { ...currentEmailSettings, [field]: value } }) : null);
   };
 
   const handleFromAddressChange = (key: FromAddressKey, value: string) => {
-    if (!settings?.emailSettings) return;
-    const newFrom = { ...settings.emailSettings.fromAddresses, [key]: value };
+    if (!settings) return;
+    const currentEmailSettings = settings.emailSettings || {
+      sendingMethod: 'custom',
+      fromAddresses: { default: '', auth: '', notifications: '', support: '', broadcast: '' },
+      smtpSettings: { host: '', port: 587, user: '', pass: '', secure: false },
+    };
+    const currentFromAddresses = currentEmailSettings.fromAddresses || { default: '', auth: '', notifications: '', support: '', broadcast: '' };
+    const newFrom = { ...currentFromAddresses, [key]: value };
     handleEmailSettingsChange('fromAddresses', newFrom);
   };
   
   const handleSmtpChange = (field: string, value: any) => {
-      if (!settings?.emailSettings) return;
-      const newSmtp = { ...settings.emailSettings.smtpSettings, [field]: value };
-      handleEmailSettingsChange('smtpSettings', newSmtp);
+    if (!settings) return;
+    const currentEmailSettings = settings.emailSettings || {
+      sendingMethod: 'custom',
+      fromAddresses: { default: '', auth: '', notifications: '', support: '', broadcast: '' },
+      smtpSettings: { host: '', port: 587, user: '', pass: '', secure: false },
+    };
+    const currentSmtp = currentEmailSettings.smtpSettings || { host: '', port: 587, user: '', pass: '', secure: false };
+    const newSmtp = { ...currentSmtp, [field]: value };
+    handleEmailSettingsChange('smtpSettings', newSmtp);
   };
   
   const handleGmailChange = (field: string, value: any) => {
-    if (!settings?.emailSettings) return;
-    const newGmail = { ...settings.emailSettings.gmailSettings, [field]: value };
+    if (!settings) return;
+    const currentEmailSettings = settings.emailSettings || {
+      sendingMethod: 'custom',
+      fromAddresses: { default: '', auth: '', notifications: '', support: '', broadcast: '' },
+      smtpSettings: { host: '', port: 587, user: '', pass: '', secure: false },
+    };
+    const currentGmail = currentEmailSettings.gmailSettings || { connectedEmail: '' };
+    const newGmail = { ...currentGmail, [field]: value };
     handleEmailSettingsChange('gmailSettings', newGmail);
+  };
+
+  const handleGmailDisconnect = () => {
+    if (!settings) return;
+    const currentEmailSettings = settings.emailSettings || {
+      sendingMethod: 'custom',
+      fromAddresses: { default: '', auth: '', notifications: '', support: '', broadcast: '' },
+      smtpSettings: { host: '', port: 587, user: '', pass: '', secure: false },
+    };
+    handleEmailSettingsChange('gmailSettings', { connectedEmail: '', refreshToken: '', aliases: [] });
+  };
+
+  const handleSecuritySettingsChange = (field: string, value: any) => {
+    if (!settings) return;
+    const currentSecuritySettings = settings.securitySettings || {
+      requireOtpVerification: false,
+    };
+    setSettings(prev => prev ? ({ ...prev, securitySettings: { ...currentSecuritySettings, [field]: value } }) : null);
   };
 
   const handleTemplateChange = (templateName: EmailTemplateName, field: keyof EmailTemplate, value: string) => {
     if (!settings) return;
     setSettings(prev => {
-        if (!prev || !prev.emailTemplates) return prev;
-        const newTemplates = { ...prev.emailTemplates };
+        if (!prev) return prev;
+        const newTemplates = { ...prev.emailTemplates } as any;
         newTemplates[templateName] = { ...newTemplates[templateName], [field]: value };
         return { ...prev, emailTemplates: newTemplates };
     });
@@ -166,6 +267,7 @@ export default function AdminMailSettingsPage() {
       await updateSiteSettings({ 
           emailSettings: settings.emailSettings,
           emailTemplates: settings.emailTemplates,
+          securitySettings: settings.securitySettings,
        });
       toast({
         title: 'Settings Saved',
@@ -191,7 +293,35 @@ export default function AdminMailSettingsPage() {
     );
   }
 
-  const { emailSettings, emailTemplates } = settings;
+  const emailSettings = {
+    sendingMethod: settings.emailSettings?.sendingMethod || 'custom',
+    fromAddresses: {
+        default: '',
+        auth: '',
+        notifications: '',
+        support: '',
+        broadcast: '',
+        ...settings.emailSettings?.fromAddresses
+    },
+    smtpSettings: {
+        host: '',
+        port: 587,
+        user: '',
+        pass: '',
+        secure: false,
+        ...settings.emailSettings?.smtpSettings
+    },
+    gmailSettings: {
+        connectedEmail: '',
+        ...settings.emailSettings?.gmailSettings
+    }
+  };
+  const securitySettings = {
+    requireOtpVerification: false,
+    ...settings.securitySettings
+  };
+  const emailTemplates = (settings.emailTemplates || {}) as Record<string, any>;
+  const isSmtpConfigured = !!(emailSettings.smtpSettings.host && emailSettings.smtpSettings.user);
 
   return (
     <div className="space-y-6">
@@ -205,165 +335,212 @@ export default function AdminMailSettingsPage() {
           </CardTitle>
           <CardDescription>Choose how your application sends transactional emails.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
           <RadioGroup
-            value={emailSettings?.sendingMethod}
-            onValueChange={(value: 'firebase' | 'custom' | 'gmail') => handleEmailSettingsChange('sendingMethod', value)}
-            className="space-y-3"
+            value={emailSettings.sendingMethod}
+            onValueChange={(value: 'custom' | 'gmail') => handleEmailSettingsChange('sendingMethod', value)}
+            className="space-y-4"
           >
-            {/* Firebase option */}
-            <Label className="flex items-start gap-4 border p-4 rounded-lg has-[:checked]:bg-muted has-[:checked]:border-primary transition-all cursor-pointer">
-              <RadioGroupItem value="firebase" id="firebase-mail" className="mt-0.5" />
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-semibold text-base">Firebase Authentication Emailing</span>
-                  <Badge variant="secondary" className="text-xs">Free</Badge>
-                </div>
-                <p className="text-sm text-muted-foreground">Use Firebase's built-in service for password resets and email verification. No configuration needed, but templates cannot be customized.</p>
-              </div>
-            </Label>
-
             {/* Custom SMTP option */}
-            <Label className="flex items-start gap-4 border p-4 rounded-lg has-[:checked]:bg-muted has-[:checked]:border-primary transition-all cursor-pointer">
-              <RadioGroupItem value="custom" id="custom-mail" className="mt-0.5" />
-              <div className="flex-1 space-y-5">
-                <div>
+            <div className="flex flex-col border p-4 rounded-lg bg-muted/10 has-[:checked]:bg-muted/40 has-[:checked]:border-primary transition-all">
+              <Label className="flex items-start gap-4 cursor-pointer">
+                <RadioGroupItem value="custom" id="custom-mail" className="mt-0.5" />
+                <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-semibold text-base">Custom SMTP Server</span>
                     <Badge variant="outline" className="text-xs">Recommended</Badge>
                   </div>
-                  <p className="text-sm text-muted-foreground">Connect your own SMTP server (e.g., SendGrid, Postmark, Brevo) for full template control and multiple from-addresses.</p>
+                  <p className="text-sm text-muted-foreground">Connect your own SMTP server (e.g., SendGrid, Postmark, Brevo) for full template control.</p>
                 </div>
+              </Label>
 
-                {emailSettings?.sendingMethod === 'custom' && (
-                  <div className="space-y-6 pt-4 border-t" onClick={(e) => e.preventDefault()}>
-
-                    {/* From Addresses */}
-                    <div className="space-y-4">
-                      <div>
-                        <h4 className="text-sm font-semibold text-foreground mb-0.5">From Addresses</h4>
-                        <p className="text-xs text-muted-foreground">Configure a dedicated sending address for each email category.</p>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {FROM_ADDRESS_CONFIG.map(({ key, label, description, badge }) => (
-                          <div key={key} className="space-y-1.5 p-3 rounded-md bg-muted/30 border">
-                            <div className="flex items-center gap-2">
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{badge}</Badge>
-                              <Label htmlFor={`from-${key}`} className="text-sm font-medium">{label}</Label>
-                            </div>
-                            <Input
-                              id={`from-${key}`}
-                              value={emailSettings.fromAddresses[key] || ''}
-                              onChange={(e) => handleFromAddressChange(key, e.target.value)}
-                              placeholder={`${key}@yourapp.com`}
-                              className="font-mono text-sm"
-                            />
-                            <p className="text-[11px] text-muted-foreground leading-tight">{description}</p>
-                          </div>
-                        ))}
-                      </div>
+              {emailSettings.sendingMethod === 'custom' && (
+                <div className="space-y-4 pt-4 mt-4 border-t" onClick={(e) => e.preventDefault()}>
+                  <h4 className="text-sm font-semibold text-foreground">SMTP Server Configuration</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="smtpHost">SMTP Host</Label>
+                      <Input id="smtpHost" value={emailSettings.smtpSettings.host} onChange={(e) => handleSmtpChange('host', e.target.value)} placeholder="smtp.example.com" />
                     </div>
-
-                    <Separator />
-
-                    {/* SMTP Server */}
-                    <div className="space-y-4">
-                      <h4 className="text-sm font-semibold text-foreground">SMTP Server Configuration</h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="smtpHost">SMTP Host</Label>
-                          <Input id="smtpHost" value={emailSettings.smtpSettings.host} onChange={(e) => handleSmtpChange('host', e.target.value)} placeholder="smtp.example.com" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="smtpPort">Port</Label>
-                          <Input id="smtpPort" type="number" value={emailSettings.smtpSettings.port} onChange={(e) => handleSmtpChange('port', parseInt(e.target.value, 10))} />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="smtpUser">Username</Label>
-                          <Input id="smtpUser" value={emailSettings.smtpSettings.user} onChange={(e) => handleSmtpChange('user', e.target.value)} placeholder="smtp_username" />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="smtpPass">Password / API Key</Label>
-                          <Input id="smtpPass" type="password" value={emailSettings.smtpSettings.pass} onChange={(e) => handleSmtpChange('pass', e.target.value)} placeholder="••••••••••••" />
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch id="smtp-secure" checked={emailSettings.smtpSettings.secure} onCheckedChange={(checked) => handleSmtpChange('secure', checked)} />
-                        <Label htmlFor="smtp-secure" className="text-sm">Use SSL/TLS (recommended for port 465)</Label>
-                      </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="smtpPort">Port</Label>
+                      <Input id="smtpPort" type="number" value={emailSettings.smtpSettings.port} onChange={(e) => handleSmtpChange('port', parseInt(e.target.value, 10))} />
                     </div>
-
-                    <Separator />
-
-                    {/* Test Buttons */}
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-semibold text-foreground">Send Test Emails</h4>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {FROM_ADDRESS_CONFIG.map(({ key, label }) => (
-                          <Button
-                            key={key}
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleSendTestMail(key)}
-                            disabled={!!isSendingTest}
-                            className="text-xs h-8"
-                          >
-                            {isSendingTest === key && <Icons.AppLogo className="mr-1.5 h-3 w-3 animate-spin" />}
-                            Test {label}
-                          </Button>
-                        ))}
-                      </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="smtpUser">Username</Label>
+                      <Input id="smtpUser" value={emailSettings.smtpSettings.user} onChange={(e) => handleSmtpChange('user', e.target.value)} placeholder="smtp_username" />
                     </div>
-
+                    <div className="space-y-1.5">
+                      <Label htmlFor="smtpPass">Password / API Key</Label>
+                      <Input id="smtpPass" type="password" value={emailSettings.smtpSettings.pass} onChange={(e) => handleSmtpChange('pass', e.target.value)} placeholder="••••••••••••" />
+                    </div>
                   </div>
-                )}
-              </div>
-            </Label>
+                  <div className="flex items-center gap-2">
+                    <Switch id="smtp-secure" checked={emailSettings.smtpSettings.secure} onCheckedChange={(checked) => handleSmtpChange('secure', checked)} />
+                    <Label htmlFor="smtp-secure" className="text-sm">Use SSL/TLS (recommended for port 465)</Label>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Gmail API option */}
-            <Label className="flex items-start gap-4 border p-4 rounded-lg has-[:checked]:bg-muted has-[:checked]:border-primary transition-all cursor-pointer">
-              <RadioGroupItem value="gmail" id="gmail-api" className="mt-0.5" />
-              <div className="flex-1 space-y-4">
-                <div>
+            <div className="flex flex-col border p-4 rounded-lg bg-muted/10 has-[:checked]:bg-muted/40 has-[:checked]:border-primary transition-all">
+              <Label className="flex items-start gap-4 cursor-pointer">
+                <RadioGroupItem value="gmail" id="gmail-api" className="mt-0.5" />
+                <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-semibold text-base">Gmail API</span>
                     <Badge variant="outline" className="text-xs">Advanced</Badge>
                   </div>
-                  <p className="text-sm text-muted-foreground">Send via the Gmail API for high deliverability. Requires a Google Cloud project with OAuth 2.0.</p>
+                  <p className="text-sm text-muted-foreground">Send via the Gmail API for high deliverability. Requires OAuth 2.0 connection.</p>
                 </div>
-                {emailSettings?.sendingMethod === 'gmail' && (
-                  <div className="space-y-4 pt-4 border-t" onClick={(e) => e.preventDefault()}>
-                    {emailSettings.gmailSettings?.connectedEmail ? (
-                      <div className="flex items-center justify-between p-3 bg-muted rounded-md">
-                        <div className="flex items-center gap-2">
-                          <Icons.Mail className="h-5 w-5 text-primary" />
-                          <p className="text-sm font-medium">Connected as {emailSettings.gmailSettings.connectedEmail}</p>
-                        </div>
-                        <Button size="sm" variant="secondary" onClick={() => handleGmailChange('connectedEmail', '')}>Disconnect</Button>
+              </Label>
+
+              {emailSettings.sendingMethod === 'gmail' && (
+                <div className="space-y-4 pt-4 mt-4 border-t" onClick={(e) => e.preventDefault()}>
+                  {emailSettings.gmailSettings?.connectedEmail ? (
+                    <div className="flex items-center justify-between p-3 bg-muted rounded-md">
+                      <div className="flex items-center gap-2">
+                        <Mail className="h-5 w-5 text-primary" />
+                        <p className="text-sm font-medium">Connected as {emailSettings.gmailSettings.connectedEmail}</p>
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center text-center p-6 border-2 border-dashed rounded-lg">
-                        <Icons.Google className="h-8 w-8 mb-3 text-muted-foreground" />
-                        <p className="text-sm text-muted-foreground mb-4">No Gmail account connected.</p>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button type="button" variant="secondary" onClick={() => toast({ title: 'Feature Not Implemented', description: 'Gmail API connection requires backend logic not yet implemented.' })}>
-                                <Icons.Google className="mr-2 h-4 w-4" />
-                                Connect with Gmail
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent><p>This feature requires backend implementation.</p></TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </Label>
+                      <Button type="button" size="sm" variant="secondary" onClick={handleGmailDisconnect}>Disconnect</Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-center p-6 border border-dashed rounded-lg bg-background/50">
+                      <Mail className="h-8 w-8 mb-3 text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground mb-4">No Gmail account connected.</p>
+                      <Button type="button" variant="secondary" onClick={() => window.location.href = '/api/admin/gmail/auth'}>
+                        <Mail className="mr-2 h-4 w-4" />
+                        Connect with Gmail
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </RadioGroup>
+
+          <Separator />
+
+          {/* From Addresses */}
+          <div className="space-y-4">
+            <div>
+              <h4 className="text-sm font-semibold text-foreground mb-0.5">From Addresses</h4>
+              <p className="text-xs text-muted-foreground">Configure a dedicated sending address for each email category.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {FROM_ADDRESS_CONFIG.map(({ key, label, description, badge }) => (
+                <div key={key} className="space-y-1.5 p-3 rounded-md bg-muted/30 border">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{badge}</Badge>
+                    <Label htmlFor={`from-${key}`} className="text-sm font-medium">{label}</Label>
+                  </div>
+                  {emailSettings.sendingMethod === 'gmail' ? (
+                    emailSettings.gmailSettings?.connectedEmail ? (
+                      <Select
+                        value={emailSettings.fromAddresses[key] || emailSettings.gmailSettings.connectedEmail}
+                        onValueChange={(val) => handleFromAddressChange(key, val)}
+                      >
+                        <SelectTrigger id={`from-${key}`} className="w-full text-xs font-mono">
+                          <SelectValue placeholder="Select sender email..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(emailSettings.gmailSettings.aliases || [emailSettings.gmailSettings.connectedEmail]).map(alias => (
+                            <SelectItem key={alias} value={alias} className="font-mono text-xs">
+                              {alias}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id={`from-${key}`}
+                        value=""
+                        disabled
+                        placeholder="Connect Gmail account first"
+                        className="font-mono text-xs opacity-75"
+                      />
+                    )
+                  ) : (
+                    <Input
+                      id={`from-${key}`}
+                      value={emailSettings.fromAddresses[key] || ''}
+                      onChange={(e) => handleFromAddressChange(key, e.target.value)}
+                      placeholder={`${key}@yourapp.com`}
+                      className="font-mono text-sm"
+                    />
+                  )}
+                  <p className="text-[11px] text-muted-foreground leading-tight">{description}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Test Buttons */}
+          <div className="space-y-3">
+            <h4 className="text-sm font-semibold text-foreground">Send Test Emails</h4>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {FROM_ADDRESS_CONFIG.map(({ key, label }) => (
+                <Button
+                  key={key}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleSendTestMail(key)}
+                  disabled={!!isSendingTest}
+                  className="text-xs h-8"
+                >
+                  {isSendingTest === key && <Icons.AppLogo className="mr-1.5 h-3 w-3 animate-spin" />}
+                  Test {label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ─── EMAIL VERIFICATION & SIGNUP SECURITY ────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldAlert className="h-5 w-5 text-primary" />
+            Email Verification & Sign-up Security
+          </CardTitle>
+          <CardDescription>Control authentication rules and security policies on sign-up.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/20">
+            <div className="space-y-0.5">
+              <Label htmlFor="require-otp" className="text-base font-semibold">Require Email Verification (OTP Link)</Label>
+              <p className="text-sm text-muted-foreground max-w-[500px]">
+                Require newly registered users to click a verification link sent to their email address before accessing their account.
+              </p>
+            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center py-2 px-1">
+                    <Switch
+                      id="require-otp"
+                      checked={isSmtpConfigured && securitySettings.requireOtpVerification}
+                      disabled={!isSmtpConfigured}
+                      onCheckedChange={(checked) => handleSecuritySettingsChange('requireOtpVerification', checked)}
+                    />
+                  </div>
+                </TooltipTrigger>
+                {!isSmtpConfigured && (
+                  <TooltipContent>
+                    <p className="text-xs max-w-[220px] text-center">
+                      Email verification is locked because SMTP settings are not configured.
+                    </p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
+          </div>
         </CardContent>
       </Card>
 
@@ -380,64 +557,77 @@ export default function AdminMailSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="registration" className="w-full">
-            <div className="overflow-x-auto">
-              <TabsList className="flex w-max gap-1 mb-4">
+          <Tabs defaultValue="registration" className="grid grid-cols-1 md:grid-cols-4 gap-6 w-full" orientation="vertical">
+            {/* Sidebar list */}
+            <div className="col-span-1 border-b md:border-b-0 md:border-r pb-4 md:pb-0 md:pr-4">
+              <TabsList className="flex flex-col bg-transparent w-full h-auto gap-1 p-0 justify-start items-stretch">
                 {templateGroups.map(group => (
-                  <div key={group.label} className="flex items-center gap-1">
-                    <span className="text-xs text-muted-foreground px-2 font-medium whitespace-nowrap">{group.label}</span>
-                    {group.templates.map(t => (
-                      <TabsTrigger key={t} value={t} className="text-xs capitalize whitespace-nowrap">
-                        {t.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}
-                      </TabsTrigger>
-                    ))}
-                    <div className="w-px h-4 bg-border mx-1" />
+                  <div key={group.label} className="space-y-1">
+                    <span className="text-[10px] text-muted-foreground/80 px-2 font-semibold uppercase tracking-wider block mt-2 mb-1">
+                      {group.label}
+                    </span>
+                    {group.templates.map(t => {
+                      const IconComponent = templateIcons[t as EmailTemplateName] || Mail;
+                      return (
+                        <TabsTrigger
+                          key={t}
+                          value={t}
+                          className="w-full justify-start text-left py-2 px-2.5 text-xs capitalize font-medium transition-all rounded-md gap-2 hover:bg-muted/50 data-[state=active]:bg-muted data-[state=active]:text-foreground data-[state=active]:font-semibold"
+                        >
+                          <IconComponent className="h-4 w-4 opacity-75 text-primary shrink-0" />
+                          <span className="truncate">{t.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}</span>
+                        </TabsTrigger>
+                      );
+                    })}
                   </div>
                 ))}
               </TabsList>
             </div>
 
-            {(Object.keys(templatePlaceholders) as EmailTemplateName[]).map(tKey => (
-              <TabsContent key={tKey} value={tKey} className="mt-0">
-                <div className="space-y-4 p-4 border rounded-lg bg-muted/10">
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`${tKey}-subject`} className="text-sm font-medium">Subject Line</Label>
-                    <Input
-                      id={`${tKey}-subject`}
-                      value={emailTemplates?.[tKey]?.subject || ''}
-                      onChange={(e) => handleTemplateChange(tKey, 'subject', e.target.value)}
-                      placeholder="Email subject..."
-                      className="font-mono text-sm"
-                    />
+            {/* Editor Area */}
+            <div className="col-span-1 md:col-span-3">
+              {(Object.keys(templatePlaceholders) as EmailTemplateName[]).map(tKey => (
+                <TabsContent key={tKey} value={tKey} className="mt-0">
+                  <div className="space-y-4 p-4 border rounded-lg bg-muted/10">
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`${tKey}-subject`} className="text-sm font-medium">Subject Line</Label>
+                      <Input
+                        id={`${tKey}-subject`}
+                        value={emailTemplates?.[tKey]?.subject || ''}
+                        onChange={(e) => handleTemplateChange(tKey, 'subject', e.target.value)}
+                        placeholder="Email subject..."
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor={`${tKey}-body`} className="text-sm font-medium">Body</Label>
+                      <Textarea
+                        id={`${tKey}-body`}
+                        value={emailTemplates?.[tKey]?.body || ''}
+                        onChange={(e) => handleTemplateChange(tKey, 'body', e.target.value)}
+                        rows={10}
+                        className="font-mono text-sm resize-y"
+                        placeholder="Email body content..."
+                      />
+                    </div>
+                    <Accordion type="single" collapsible>
+                      <AccordionItem value="placeholders" className="border-b-0">
+                        <AccordionTrigger className="text-xs text-muted-foreground hover:no-underline p-0 h-auto">
+                          View available placeholders
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="flex flex-wrap gap-2 pt-2">
+                            {templatePlaceholders[tKey]?.map(p => (
+                              <Badge key={p} variant="secondary" className="font-mono text-xs">{p}</Badge>
+                            ))}
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`${tKey}-body`} className="text-sm font-medium">Body</Label>
-                    <Textarea
-                      id={`${tKey}-body`}
-                      value={emailTemplates?.[tKey]?.body || ''}
-                      onChange={(e) => handleTemplateChange(tKey, 'body', e.target.value)}
-                      rows={10}
-                      className="font-mono text-sm resize-y"
-                      placeholder="Email body content..."
-                    />
-                  </div>
-                  <Accordion type="single" collapsible>
-                    <AccordionItem value="placeholders" className="border-b-0">
-                      <AccordionTrigger className="text-xs text-muted-foreground hover:no-underline p-0 h-auto">
-                        View available placeholders
-                      </AccordionTrigger>
-                      <AccordionContent>
-                        <div className="flex flex-wrap gap-2 pt-2">
-                          {templatePlaceholders[tKey]?.map(p => (
-                            <Badge key={p} variant="secondary" className="font-mono text-xs">{p}</Badge>
-                          ))}
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-                  </Accordion>
-                </div>
-              </TabsContent>
-            ))}
+                </TabsContent>
+              ))}
+            </div>
           </Tabs>
         </CardContent>
       </Card>

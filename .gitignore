@@ -41,6 +41,7 @@ next-env.d.ts
 .genkit/*
 .env*
 PROJECT_KNOWLEDGE.md
+service-account.json
 
 # firebase
 firebase-debug.log
@@ -49,3 +50,11 @@ firestore-debug.log
 # local session tracking files
 todo.md
 progress.md
+
+# secrets and data exports
+service-account.json
+scripts/exports/
+oracle_migration_data/
+wallet/
+Wallet*.zip
+

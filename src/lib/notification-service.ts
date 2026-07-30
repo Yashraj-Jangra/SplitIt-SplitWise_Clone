@@ -1,5 +1,3 @@
-import { getAuth } from 'firebase/auth';
-import { app } from './firebase';
 import type { NotificationEventType } from '@/types';
 
 export interface DispatchNotificationParams {
@@ -10,25 +8,20 @@ export interface DispatchNotificationParams {
   actorId?: string;
   groupId?: string;
   expenseId?: string;
+  settlementId?: string;
   target?: 'all_users' | 'specific_users' | 'group';
 }
 
 export async function dispatchNotification(params: DispatchNotificationParams): Promise<void> {
-  const auth = getAuth(app);
-  const user = auth.currentUser;
-  
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+  const baseUrl = typeof window === 'undefined'
+    ? (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3231')
+    : '';
 
-  if (user) {
-    const token = await user.getIdToken();
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch('/api/notifications/send', {
+  const response = await fetch(`${baseUrl}/api/notifications/send`, {
     method: 'POST',
-    headers,
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify(params),
   });
 
@@ -99,7 +92,8 @@ export const notifySettlementAdded = async (
     recipientId: string, 
     actorId: string, 
     groupId: string, 
-    amount: number
+    amount: number,
+    settlementId?: string
 ) => {
     await dispatchNotification({
         type: 'settlement_added',
@@ -108,6 +102,7 @@ export const notifySettlementAdded = async (
         body: `You received a payment of ${amount}.`,
         actorId,
         groupId,
+        settlementId,
         target: 'specific_users'
     });
 };
@@ -177,3 +172,51 @@ export const broadcastToAll = async (
         target: 'all_users'
     });
 };
+
+export const notifyPaymentReminder = async (
+    recipientId: string, 
+    actorId: string, 
+    groupId: string | undefined, 
+    groupName: string | undefined,
+    balanceAmount: number,
+    forceEmail: boolean = false
+) => {
+    await dispatchNotification({
+        type: 'payment_reminder',
+        recipientIds: [recipientId],
+        title: 'Settle Up Reminder',
+        body: `Friendly reminder to settle up your outstanding balance of $${balanceAmount.toFixed(2)}${groupName ? ` in "${groupName}"` : ''}.`,
+        actorId,
+        groupId,
+        target: 'specific_users',
+        ...({
+            balanceAmount: `$${balanceAmount.toFixed(2)}`,
+            groupName: groupName || 'your group',
+            forceEmail
+        } as any)
+    });
+};
+
+export const notifyPaymentConfirmationRequest = async (
+    actorId: string,
+    recipientId: string,
+    amount: number,
+    groupId?: string,
+    groupName?: string
+) => {
+    await dispatchNotification({
+        type: 'payment_confirmation_request',
+        recipientIds: [recipientId],
+        title: 'UPI Payment Confirmation Request',
+        body: `A member marked ₹${Number(amount || 0).toFixed(2)} as paid via UPI. Please confirm receipt to auto-record this settlement.`,
+        actorId,
+        groupId,
+        target: 'specific_users',
+        ...({
+            amount: `₹${Number(amount || 0).toFixed(2)}`,
+            groupName: groupName || 'Shared Expenses',
+            forceEmail: true
+        } as any)
+    });
+};
+

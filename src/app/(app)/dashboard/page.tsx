@@ -1,18 +1,26 @@
-
 'use client';
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { useAuth } from '@/contexts/auth-context';
 import { Skeleton } from '@/components/ui/skeleton';
 import { NetBalanceCard } from '@/components/dashboard/net-balance-card';
 import { ObligationsCard } from '@/components/dashboard/obligations-card';
-import { DynamicSpendingChart } from '@/components/dashboard/dynamic-spending-chart';
-import { PredictiveInsights } from '@/components/dashboard/predictive-insights';
 import { getExpensesByUserId, getSettlementsByUserId, getGroupsByUserId, getGroupBalances, simplifyDebts } from '@/lib/mock-data';
 import type { Expense, Settlement, Group, Balance, SimplifiedSettlement, UserProfile } from '@/types';
 import { appEventEmitter } from '@/lib/event-emitter';
 import { ErrorBoundary } from '@/components/shared/error-boundary';
 import { PullToRefresh } from '@/components/shared/pull-to-refresh';
+
+// Defer heavy Recharts bundles — only loaded after user data is ready
+const DynamicSpendingChart = dynamic(
+  () => import('@/components/dashboard/dynamic-spending-chart').then(m => ({ default: m.DynamicSpendingChart })),
+  { ssr: false, loading: () => <Skeleton className="h-80 w-full" /> }
+);
+const PredictiveInsights = dynamic(
+  () => import('@/components/dashboard/predictive-insights').then(m => ({ default: m.PredictiveInsights })),
+  { ssr: false, loading: () => <Skeleton className="h-80 w-full" /> }
+);
 
 interface DashboardData {
   expenses: Expense[];
@@ -27,10 +35,10 @@ function DashboardSkeleton() {
                 <Skeleton className="h-8 w-1/3" />
                 <Skeleton className="h-4 w-1/2" />
             </div>
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-                <Skeleton className="h-[180px] w-full" />
-                <Skeleton className="h-[180px] w-full" />
-                <Skeleton className="h-[180px] w-full lg:col-span-2" />
+            <div className="grid gap-6 grid-cols-1 md:grid-cols-3">
+                <Skeleton className="h-[220px] w-full" />
+                <Skeleton className="h-[220px] w-full" />
+                <Skeleton className="h-[220px] w-full" />
             </div>
             <div className="grid gap-6 lg:grid-cols-3">
                 <Skeleton className="h-80 w-full lg:col-span-2" />
@@ -98,7 +106,6 @@ export default function DashboardPage() {
         setDashboardData({ expenses, settlements, balances });
     } catch (error) {
         console.error("Failed to load dashboard data:", error);
-        // Optionally, set an error state here
     } finally {
         setDataLoading(false);
     }
@@ -132,7 +139,7 @@ export default function DashboardPage() {
 
   return (
     <PullToRefresh onRefresh={loadDashboardData} className="min-h-screen">
-      <div className="space-y-8 p-1">
+      <div className="space-y-6 p-1">
           <div>
               <h1 className="text-2xl sm:text-3xl font-bold font-headline text-foreground tracking-tight animate-in fade-in slide-in-from-bottom-2 duration-500">
               {greeting}, {userProfile.firstName}!
@@ -140,24 +147,26 @@ export default function DashboardPage() {
               <p className="text-sm sm:text-base text-muted-foreground">Here's what's happening with your finances today.</p>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="sm:col-span-1">
+          {/* ── Top Row: 3 Equal-Width Financial Position Cards ──────────────── */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="h-full">
                   <ErrorBoundary>
                       <NetBalanceCard expenses={expenses} settlements={settlements} currentUserId={userProfile.uid} />
                   </ErrorBoundary>
               </div>
-              <div className="sm:col-span-1">
+              <div className="h-full">
                   <ErrorBoundary>
                       <ObligationsCard balances={balances} type="owed" />
                   </ErrorBoundary>
               </div>
-              <div className="sm:col-span-2 lg:col-span-2">
+              <div className="h-full">
                   <ErrorBoundary>
                       <ObligationsCard balances={balances} type="owes" />
                   </ErrorBoundary>
               </div>
           </div>
 
+          {/* ── Middle Row: Dynamic Spending & Predictive Insights ───────────── */}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               <div className="lg:col-span-2">
                   <ErrorBoundary>

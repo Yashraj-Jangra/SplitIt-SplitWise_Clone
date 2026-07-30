@@ -1,8 +1,3 @@
-
-'use client';
-
-import { Separator } from '@/components/ui/separator';
-
 export default function SettingsLayout({
   children,
 }: {
@@ -10,15 +5,19 @@ export default function SettingsLayout({
 }) {
   return (
     <div className="space-y-6 pb-16">
-      <div className="space-y-0.5">
-        <h1 className="text-3xl font-bold font-headline text-foreground">
-          Site Settings
-        </h1>
-        <p className="text-muted-foreground">
-          Manage your application-wide configurations and content.
-        </p>
+      {/* Header Banner */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/40 pb-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+            Admin Site Settings
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Global application configuration, authentication wallpapers, email services, and theme customization.
+          </p>
+        </div>
       </div>
-      <Separator className="my-6" />
+
+      {/* Main Content Area */}
       <div className="w-full">{children}</div>
     </div>
   );

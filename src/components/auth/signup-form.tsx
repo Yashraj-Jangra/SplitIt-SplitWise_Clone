@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { FirebaseError } from 'firebase/app';
 import { useState, useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -69,22 +68,13 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
         description: "You can now log in with your new account.",
       });
       router.push("/auth/login");
-    } catch (error) {
-      let description = "An unknown error occurred.";
-      if (error instanceof FirebaseError) {
-        if (error.code === 'auth/email-already-in-use') {
-          description = "This email address is already in use.";
-           form.setError("email", { type: "manual", message: description });
-        } else {
-          description = `Signup failed: ${error.message}`;
-        }
-      } else if (error instanceof Error) {
-        if (error.message.toLowerCase().includes("username")) {
-            description = error.message;
-            form.setError("username", { type: "manual", message: description });
-        } else {
-            description = error.message;
-        }
+    } catch (error: any) {
+      let description = error.message || "An unknown error occurred.";
+      if (description.includes("email") || description.includes("use")) {
+        description = "This email address is already in use.";
+        form.setError("email", { type: "manual", message: description });
+      } else if (description.toLowerCase().includes("username")) {
+        form.setError("username", { type: "manual", message: description });
       }
       toast({
         variant: "destructive",
@@ -103,11 +93,8 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
         description: "Welcome!",
       });
       router.push("/dashboard");
-    } catch (error) {
-      let description = "An unknown error occurred. Please try again.";
-      if (error instanceof FirebaseError) {
-        description = `Sign up failed: ${error.message}`;
-      }
+    } catch (error: any) {
+      let description = error.message || "An unknown error occurred. Please try again.";
       toast({
         variant: "destructive",
         title: "Google Sign-Up Failed",
@@ -141,9 +128,9 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
                     name="firstName"
                     render={({ field }) => (
                     <FormItem>
-                        <FormLabel>First Name</FormLabel>
+                        <FormLabel className="text-sm font-medium">First Name</FormLabel>
                         <FormControl>
-                            <Input placeholder={authPageSettings?.signupFirstNamePlaceholder || "Bartholomew"} {...field} className="border-x-0 border-t-0 border-b-2 rounded-none bg-transparent px-1 focus:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 transition focus-visible:shadow-none" />
+                            <Input placeholder={authPageSettings?.signupFirstNamePlaceholder || "Bartholomew"} {...field} className="h-11 rounded-xl bg-muted/20 border-border/30 px-4 text-sm font-normal focus-visible:ring-primary focus-visible:border-primary transition-all" />
                         </FormControl>
                         <FormMessage />
                     </FormItem>
@@ -154,9 +141,9 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
                     name="lastName"
                     render={({ field }) => (
                     <FormItem>
-                        <FormLabel>Last Name (Optional)</FormLabel>
+                        <FormLabel className="text-sm font-medium">Last Name (Optional)</FormLabel>
                         <FormControl>
-                            <Input placeholder={authPageSettings?.signupLastNamePlaceholder || "Cubbins"} {...field} className="border-x-0 border-t-0 border-b-2 rounded-none bg-transparent px-1 focus:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 transition focus-visible:shadow-none" />
+                            <Input placeholder={authPageSettings?.signupLastNamePlaceholder || "Cubbins"} {...field} className="h-11 rounded-xl bg-muted/20 border-border/30 px-4 text-sm font-normal focus-visible:ring-primary focus-visible:border-primary transition-all" />
                         </FormControl>
                         <FormMessage />
                     </FormItem>
@@ -168,9 +155,9 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
                 name="username"
                 render={({ field }) => (
                 <FormItem>
-                    <FormLabel>Username</FormLabel>
+                    <FormLabel className="text-sm font-medium">Username</FormLabel>
                     <FormControl>
-                    <Input placeholder={authPageSettings?.signupUsernamePlaceholder || "johndoe99"} {...field} className="border-x-0 border-t-0 border-b-2 rounded-none bg-transparent px-1 focus:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 transition focus-visible:shadow-none" />
+                    <Input placeholder={authPageSettings?.signupUsernamePlaceholder || "johndoe99"} {...field} className="h-11 rounded-xl bg-muted/20 border-border/30 px-4 text-sm font-normal focus-visible:ring-primary focus-visible:border-primary transition-all" />
                     </FormControl>
                     <FormMessage />
                 </FormItem>
@@ -181,9 +168,9 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
                 name="email"
                 render={({ field }) => (
                 <FormItem>
-                    <FormLabel>Email</FormLabel>
+                    <FormLabel className="text-sm font-medium">Email</FormLabel>
                     <FormControl>
-                    <Input type="email" placeholder={authPageSettings?.signupEmailPlaceholder || "you@example.com"} {...field} className="border-x-0 border-t-0 border-b-2 rounded-none bg-transparent px-1 focus:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 transition focus-visible:shadow-none" />
+                    <Input type="email" placeholder={authPageSettings?.signupEmailPlaceholder || "you@example.com"} {...field} className="h-11 rounded-xl bg-muted/20 border-border/30 px-4 text-sm font-normal focus-visible:ring-primary focus-visible:border-primary transition-all" />
                     </FormControl>
                     <FormMessage />
                 </FormItem>
@@ -194,16 +181,16 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
                 name="password"
                 render={({ field }) => (
                 <FormItem>
-                    <FormLabel>Password</FormLabel>
+                    <FormLabel className="text-sm font-medium">Password</FormLabel>
                     <FormControl>
-                    <Input type="password" placeholder={authPageSettings?.signupPasswordPlaceholder || "••••••••"} {...field} className="border-x-0 border-t-0 border-b-2 rounded-none bg-transparent px-1 focus:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 transition focus-visible:shadow-none" />
+                    <Input type="password" placeholder={authPageSettings?.signupPasswordPlaceholder || "••••••••"} {...field} className="h-11 rounded-xl bg-muted/20 border-border/30 px-4 text-sm font-normal focus-visible:ring-primary focus-visible:border-primary transition-all" />
                     </FormControl>
                     <FormMessage />
                 </FormItem>
                 )}
             />
             
-            <Button type="submit" className="w-full bg-secondary-foreground text-secondary hover:bg-secondary-foreground/90 mt-6" disabled={form.formState.isSubmitting || isGoogleLoading}>
+            <Button type="submit" className="w-full h-11 rounded-xl text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors mt-6" disabled={form.formState.isSubmitting || isGoogleLoading}>
                 {form.formState.isSubmitting ? "Creating Account..." : "Create Account"}
             </Button>
         </form>
@@ -211,7 +198,7 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
 
       <div className="relative my-6">
         <div className="absolute inset-0 flex items-center">
-          <span className="w-full border-t" />
+          <span className="w-full border-t border-border/30" />
         </div>
         <div className="relative flex justify-center text-xs uppercase">
           <span className="bg-card px-2 text-muted-foreground">
@@ -219,7 +206,7 @@ export function SignupForm({ authPageSettings, appName }: SignupFormProps) {
           </span>
         </div>
       </div>
-      <Button variant="outline" className="w-full" onClick={handleGoogleLogin} disabled={form.formState.isSubmitting || isGoogleLoading}>
+      <Button variant="outline" className="w-full h-11 rounded-xl text-sm font-medium border-border/30 bg-muted/10 hover:bg-muted/30 transition-colors" onClick={handleGoogleLogin} disabled={form.formState.isSubmitting || isGoogleLoading}>
         {isGoogleLoading ? (
           <Icons.AppLogo className="mr-2 h-4 w-4 animate-spin" />
         ) : (

@@ -1,23 +1,9 @@
-
 import { NextResponse } from 'next/server';
-import { getSiteSettingsAdmin } from '@/lib/firebase-admin';
+import { getSiteSettings } from '@/lib/services/settings.service';
 
-/**
- * GET /api/public/settings
- *
- * Returns a safe, stripped subset of SiteSettings for use by:
- *   - The landing page (unauthenticated)
- *   - Auth pages (login, signup, forgot-password)
- *   - The 404 page
- *
- * NEVER includes: SMTP credentials, Gmail OAuth tokens, email templates,
- * or any other sensitive configuration.
- *
- * Cached at the CDN edge for 5 minutes to minimize Firestore reads.
- */
 export async function GET() {
     try {
-        const settings = await getSiteSettingsAdmin();
+        const settings = await getSiteSettings();
 
         // Build a safe public payload — only branding, themes, and content fields
         const publicSettings = {
@@ -29,6 +15,8 @@ export async function GET() {
             defaultThemeId: settings.defaultThemeId,
             userSelectableThemeIds: settings.userSelectableThemeIds,
             customThemes: settings.customThemes,
+            expenseCategories: settings.expenseCategories,
+            countryCodes: settings.countryCodes,
             landingPage: settings.landingPage,
             authPage: settings.authPage,
             about: settings.about,
@@ -43,7 +31,6 @@ export async function GET() {
                     imageUrl: settings.maintenanceMode.imageUrl,
                 }
                 : undefined,
-            // Explicitly excluded: emailSettings, stats, emailTemplates
         };
 
         return NextResponse.json(publicSettings, {

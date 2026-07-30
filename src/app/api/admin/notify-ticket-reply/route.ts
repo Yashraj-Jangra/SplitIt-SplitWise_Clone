@@ -1,44 +1,9 @@
-
 import { NextResponse } from 'next/server';
+import { getAllTickets } from '@/lib/services/ticket.service';
+import { getSiteSettings } from '@/lib/services/settings.service';
+import { getUserProfile } from '@/lib/services/user.service';
 import nodemailer from 'nodemailer';
-import { getUserProfile } from '@/lib/mock-data';
-import { getSiteSettingsAdmin } from '@/lib/firebase-admin';
-import { getDoc, doc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import type { SupportTicket, UserProfile } from '@/types';
 import { getFullName } from '@/lib/utils';
-import { Timestamp } from 'firebase/firestore';
-
-async function getTicketById(ticketId: string): Promise<SupportTicket | null> {
-    const ticketDocRef = doc(db, 'tickets', ticketId);
-    const ticketSnap = await getDoc(ticketDocRef);
-
-    if (!ticketSnap.exists()) {
-        return null;
-    }
-
-    const ticketData = ticketSnap.data();
-    if (!ticketData) return null;
-
-    const user = await getUserProfile(ticketData.userId);
-    if (!user) return null;
-    
-    // This is simplified for the email; we don't need to hydrate every single message sender.
-    const messages = ticketData.messages.map((msg: any) => ({
-        ...msg,
-        sentAt: (msg.sentAt as Timestamp).toDate().toISOString(),
-    }));
-
-    return {
-        id: ticketSnap.id,
-        ...ticketData,
-        createdAt: (ticketData.createdAt as Timestamp).toDate().toISOString(),
-        updatedAt: (ticketData.updatedAt as Timestamp).toDate().toISOString(),
-        user,
-        messages,
-    } as SupportTicket;
-}
-
 
 export async function POST(request: Request) {
     try {
@@ -47,43 +12,46 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing required parameters.' }, { status: 400 });
         }
 
-        const [siteSettings, ticket, replier] = await Promise.all([
-            getSiteSettingsAdmin(),
-            getTicketById(ticketId),
+        const [siteSettings, allTickets, replier] = await Promise.all([
+            getSiteSettings(),
+            getAllTickets(),
             getUserProfile(replierId)
         ]);
+
+        const ticket = allTickets.find(t => t.id === ticketId);
 
         if (!ticket || !replier) {
             return NextResponse.json({ error: 'Ticket or replier not found.' }, { status: 404 });
         }
 
         const { emailSettings, appName } = siteSettings;
-        const template = siteSettings.emailTemplates?.supportTicketReply;
+        const template = (siteSettings as any).emailTemplates?.supportTicketReply;
 
         const isAdminReply = replier.role === 'admin';
-        const recipientEmail = isAdminReply ? ticket.user.email : emailSettings?.fromAddresses.support;
-        const recipientName = isAdminReply ? getFullName(ticket.user.firstName, ticket.user.lastName) : 'Support Team';
+        const recipientEmail = isAdminReply ? ticket.userEmail : (emailSettings as any)?.fromAddresses?.support;
+        const recipientName = isAdminReply ? getFullName(ticket.user.firstName || undefined, ticket.user.lastName || undefined) : 'Support Team';
 
-        if (!emailSettings || (emailSettings.sendingMethod !== 'custom' && emailSettings.sendingMethod !== 'gmail') || !recipientEmail || !template) {
+        if (!emailSettings || !(emailSettings as any).smtpSettings || !recipientEmail || !template) {
             console.log("Email notification skipped: Mail sending is not configured or recipient/template is missing.");
             return NextResponse.json({ success: true, message: 'Email notification skipped; mail not configured.' });
         }
-        
+
+        const smtp = (emailSettings as any).smtpSettings;
         const transporter = nodemailer.createTransport({
-            host: emailSettings.smtpSettings.host,
-            port: emailSettings.smtpSettings.port,
-            secure: emailSettings.smtpSettings.port === 465, // Use true for 465, false for other ports
+            host: smtp.host,
+            port: smtp.port,
+            secure: smtp.port === 465,
             auth: {
-                user: emailSettings.smtpSettings.user,
-                pass: emailSettings.smtpSettings.pass,
+                user: smtp.user,
+                pass: smtp.pass,
             },
         });
-        
+
         await transporter.verify();
 
         const subject = template.subject.replace(/{appName}/g, appName).replace(/{ticketId}/g, ticket.id.slice(0, 8));
-        
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3231';
+
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3235';
         const ticketLink = isAdminReply ? `${appUrl}/support` : `${appUrl}/admin/support/${ticket.id}`;
 
         const body = template.body
@@ -93,7 +61,7 @@ export async function POST(request: Request) {
             .replace(/{ticketLink}/g, ticketLink);
 
         const mailOptions = {
-            from: emailSettings.fromAddresses.support,
+            from: (emailSettings as any).fromAddresses?.support || 'support@splitit.app',
             to: recipientEmail,
             subject: subject,
             html: `<p>${body.replace(/\n/g, '<br>')}</p>`,

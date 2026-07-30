@@ -1,7 +1,5 @@
 
-
 import type { IconName } from "@/components/icons";
-import { Timestamp } from "firebase/firestore";
 
 export type NotificationEventType =
   | 'expense_added'
@@ -11,6 +9,8 @@ export type NotificationEventType =
   | 'member_added'
   | 'member_removed'
   | 'balance_reminder'
+  | 'payment_reminder'
+  | 'payment_confirmation_request'
   | 'support_reply'
   | 'broadcast_announcement'
   | 'broadcast_critical';
@@ -27,6 +27,7 @@ export interface UserProfile {
   avatarUrl?: string;
   countryCode?: string;
   mobileNumber?: string;
+  upiId?: string;
   dob?: string; // ISO string for client
   role: 'admin' | 'user';
   createdAt?: string; // ISO string for client
@@ -38,11 +39,11 @@ export interface GroupDocument {
   name: string;
   description?: string;
   memberIds: string[]; // Array of user uids
-  createdAt: Timestamp;
+  createdAt: Date;
   createdById: string; // user uid
   totalExpenses: number;
   coverImageUrl?: string;
-  archivedAt?: Timestamp;
+  archivedAt?: Date;
   currency?: string; // e.g. "INR" or symbol like "₹", "$", "€"
 }
 
@@ -62,19 +63,19 @@ export interface ExpenseDocument {
   description: string;
   amount: number;
   payers: ExpensePayerDocument[];
-  payerIds: string[]; // For querying
-  date: Timestamp;
+  payerIds?: string[]; // For querying
+  date: Date;
   splitType: "equally" | "unequally" | "by_shares" | "by_percentage";
   participants: ExpenseParticipantDocument[];
-  participantIds: string[]; // For querying
-  groupMemberIds: string[]; // For security rules
+  participantIds?: string[]; // For querying
+  groupMemberIds?: string[]; // For security rules
   category?: string; // This will now be the sub-category name
   masterCategory?: string; // Denormalized master category for easier querying/analytics
   notes?: string;
   receiptImageUrl?: string;
   expenseCreatorId: string;
-  groupCreatorId: string;
-  createdAt: Timestamp;
+  groupCreatorId?: string;
+  createdAt: Date;
 }
 
 export interface SettlementDocument {
@@ -82,9 +83,9 @@ export interface SettlementDocument {
   paidById: string;
   paidToId: string;
   amount: number;
-  date: Timestamp;
+  date: Date;
   notes?: string;
-  groupMemberIds: string[]; // For security rules
+  groupMemberIds?: string[]; // For security rules
 }
 
 export type HistoryEventType = 'expense_created' | 'expense_updated' | 'expense_deleted' | 'settlement_created' | 'settlement_updated' | 'settlement_deleted' | 'group_created' | 'group_updated' | 'member_added' | 'expense_restored' | 'member_removed' | 'settlement_restored';
@@ -92,16 +93,16 @@ export type HistoryEventType = 'expense_created' | 'expense_updated' | 'expense_
 export interface HistoryEventDocument {
   groupId: string;
   eventType: HistoryEventType;
-  timestamp: Timestamp;
+  timestamp: Date;
   actorId: string; // The user who performed the action
   description: string;
   data?: any; // Store old/new data, or deleted data
   restored?: boolean;
-  groupMemberIds: string[]; // For security rules
+  groupMemberIds?: string[]; // For security rules
 }
 
 export interface SupportTicketMessageDocument {
-    sentAt: Timestamp;
+    sentAt: Date;
     sentById: string; // user or admin uid
     message: string;
 }
@@ -113,8 +114,8 @@ export interface SupportTicketDocument {
     subject: string;
     category: 'bug' | 'feature' | 'billing' | 'general';
     status: 'open' | 'in-progress' | 'closed';
-    createdAt: Timestamp;
-    updatedAt: Timestamp;
+    createdAt: Date;
+    updatedAt: Date;
     messages: SupportTicketMessageDocument[];
     assignedToId?: string; // Admin UID
 }
@@ -124,19 +125,19 @@ export interface NotificationV2Document {
   type: NotificationEventType;
   title: string;
   body: string;                    // Short message (for push/in-app)
-  recipientIds: string[];          // UIDs who should receive this
-  readBy: string[];                // UIDs who have read (in-app)
+  recipientIds?: string[];          // UIDs who should receive this
+  readBy?: string[];                // UIDs who have read (in-app)
   groupId?: string;                // Link to relevant group
   expenseId?: string;              // Link to relevant expense
+  settlementId?: string;           // Link to relevant settlement
   actorId?: string;                // Who triggered this (e.g. who added expense)
-  createdAt: Timestamp;
+  createdAt: Date;
   createdBy?: string;              // 'system' | admin UID
   target: 'all_users' | 'specific_users' | 'group';
   channels: NotificationChannel[]; // Which channels were used
   imageUrl?: string;               // Optional icon override
 }
 
-// Firestore: user_notification_prefs/{userId}
 export interface UserNotificationPrefsDocument {
   userId: string;
   // Per-channel master switches
@@ -149,16 +150,18 @@ export interface UserNotificationPrefsDocument {
     push: boolean;
     email: boolean;
   }>;
-  updatedAt: Timestamp;
+  updatedAt: Date;
 }
 
-// Firestore: push_subscriptions/{userId}/devices/{deviceId}
 export interface PushSubscriptionDocument {
   userId: string;
-  fcmToken: string;
+  deviceId: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
   deviceName?: string;
-  createdAt: Timestamp;
-  lastSeen: Timestamp;
+  createdAt: Date;
+  lastSeen: Date;
 }
 
 
@@ -398,7 +401,7 @@ export interface SiteSettings {
     imageUrl: string;
   };
   emailSettings?: {
-    sendingMethod: 'firebase' | 'custom' | 'gmail';
+    sendingMethod: 'custom' | 'gmail';
     fromAddresses: {
         default: string;
         auth: string;
@@ -415,6 +418,8 @@ export interface SiteSettings {
     };
     gmailSettings?: {
         connectedEmail?: string;
+        refreshToken?: string;
+        aliases?: string[];
     }
   };
   emailTemplates?: {
@@ -442,6 +447,9 @@ export interface SiteSettings {
     title: string;
     message: string;
     imageUrl: string;
+  };
+  securitySettings?: {
+    requireOtpVerification?: boolean;
   };
 }
 

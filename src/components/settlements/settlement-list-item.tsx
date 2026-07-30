@@ -7,12 +7,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Icons } from "@/components/icons";
 import { getGroupCurrencySymbol } from "@/lib/constants";
 import { format, formatDistanceToNow } from "date-fns";
-import { getFullName, getInitials } from '@/lib/utils';
+import { getFullName, getInitials, cn } from '@/lib/utils';
 import { useToast } from "@/hooks/use-toast";
 import { deleteSettlement } from '@/lib/mock-data';
 import { AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/accordion';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
+import { useRouter } from 'next/navigation';
 import { EditSettlementDialog } from './edit-settlement-dialog';
 import {
   AlertDialog,
@@ -32,6 +33,8 @@ interface SettlementListItemProps {
   currentUserId: string;
   group?: Group;
   groupHistory?: HistoryEvent[];
+  isHighlighted?: boolean;
+  showGroupName?: boolean;
 }
 
 function SettlementDetailContent({ settlement, group, groupHistory = [] }: Omit<SettlementListItemProps, 'currentUserId'>) {
@@ -217,12 +220,20 @@ function SettlementDetailContent({ settlement, group, groupHistory = [] }: Omit<
 }
 
 
-export function SettlementListItem({ settlement, currentUserId, group, groupHistory }: SettlementListItemProps) {
+export function SettlementListItem({ settlement, currentUserId, group, groupHistory, isHighlighted, showGroupName = true }: SettlementListItemProps) {
+  const router = useRouter();
   const isPayer = settlement.paidBy.uid === currentUserId;
   const isPayee = settlement.paidTo.uid === currentUserId;
 
   return (
-    <AccordionItem value={`set-${settlement.id}`} className="border-b border-border/50">
+      <AccordionItem
+        id={`set-${settlement.id}`}
+        value={`set-${settlement.id}`}
+        className={cn(
+          "border-b border-border/50 transition-colors duration-1000",
+          isHighlighted && "bg-primary/10 dark:bg-primary/20"
+        )}
+      >
         <AccordionTrigger className="p-3 hover:bg-muted/50 transition-colors hover:no-underline [&[data-state=open]]:bg-muted/50">
             <div className="flex items-center gap-4 flex-1">
                 <div className="text-center w-12 flex-shrink-0">
@@ -237,11 +248,35 @@ export function SettlementListItem({ settlement, currentUserId, group, groupHist
                         <Icons.ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                         <span>{isPayee ? 'you' : getFullName(settlement.paidTo.firstName, settlement.paidTo.lastName)}</span>
                     </div>
-                    <p className="text-xs text-muted-foreground">Settlement</p>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                        <p className="text-xs text-muted-foreground">Settlement</p>
+                        {group && showGroupName && (
+                            <>
+                                <span className="text-[10px] text-muted-foreground/60 select-none">•</span>
+                                <span
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        router.push(`/groups/${group.id}`);
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                            e.stopPropagation();
+                                            router.push(`/groups/${group.id}`);
+                                        }
+                                    }}
+                                    className="text-[11px] font-semibold text-primary hover:underline hover:text-primary/80 transition-colors cursor-pointer"
+                                >
+                                    {group.name}
+                                </span>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
             <div className="text-right">
-                <p className="text-base font-bold text-green-500">{getGroupCurrencySymbol(group)}{settlement.amount.toFixed(2)}</p>
+                <p className="text-base font-bold text-green-500">{getGroupCurrencySymbol(group)}{Number(settlement.amount || 0).toFixed(2)}</p>
             </div>
         </AccordionTrigger>
         <AccordionContent>
