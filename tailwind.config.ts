@@ -67,9 +67,9 @@ export default {
         },
       },
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        lg: 'var(--radius-dialog)',
+        md: 'var(--radius-card)',
+        sm: 'var(--radius-button)',
       },
       keyframes: {
         'accordion-down': {
@@ -88,10 +88,15 @@ export default {
             height: '0',
           },
         },
+        orbit: {
+          '0%': { transform: 'rotate(0deg) translateX(5px) rotate(0deg)' },
+          '100%': { transform: 'rotate(360deg) translateX(5px) rotate(-360deg)' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
+        orbit: 'orbit 4s linear infinite',
       },
     },
   },
