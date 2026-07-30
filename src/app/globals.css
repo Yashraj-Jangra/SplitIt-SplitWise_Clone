@@ -251,3 +251,18 @@ body {
   }
 }
 
+/* Custom record highlighting blinking twice */
+@keyframes highlight-blink {
+  0%, 48%, 100% {
+    background-color: transparent;
+  }
+  24%, 74% {
+    background-color: hsl(var(--primary) / 0.18);
+  }
+}
+
+.animate-highlight-blink {
+  animation: highlight-blink 2.2s ease-in-out 1;
+}
+
+

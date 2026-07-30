@@ -1,252 +1,221 @@
-# Welcome to SplitIt - A Full-Stack SplitWise Clone
+<div align="center">
 
-Ever been on a group trip where someone says "let's split everything equally" and then you spend the next three months chasing people for money? Yeah, that's what this is for. **SplitIt** is a full-stack expense-splitting app that takes the drama out of shared finances.
+# 💸 SplitIt — Premium Full-Stack Expense Splitting Engine
 
-Built with Next.js, Firebase, and Tailwind CSS, it's a clean, feature-rich way to track who owes what—and make sure everyone actually pays up. Whether you're splitting rent, planning a vacation, or just tired of spreadsheet chaos, SplitIt has you covered.
+SplitIt is a state-of-the-art, high-density bill-splitting application designed to remove the complexity from shared finances for trips, vacations, roommates, and projects. 
 
-> **Note**: This is a public repo and may run a few versions behind the original production site. Check out the [live production version](https://split.cvweb.tech) for the latest features.
+Built on the **Next.js App Router**, **Oracle Autonomous Database**, **Better Auth**, and **Tailwind CSS**, it features native OS push notifications, granular settings, spending dashboards, and transactional templates.
 
-![SplitIt Dashboard Screenshot](/public/screenshots/dashboard.png)
-_Your financial overview at a glance—see what you've spent and who owes you._
+[![Next.js](https://img.shields.io/badge/Next.js-15+-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
+[![Oracle Database](https://img.shields.io/badge/Oracle-Autonomous_DB-red?style=for-the-badge&logo=oracle)](https://www.oracle.com/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-CSS_3.4-38B2AC?style=for-the-badge&logo=tailwind-css)](https://tailwindcss.com/)
+[![Better Auth](https://img.shields.io/badge/Better_Auth-1.6-orange?style=for-the-badge)](https://www.better-auth.com/)
 
-## Table of Contents
+> 🌐 Check out the [live production version](https://split.cvweb.tech) for the latest features.
 
-- [Key Features](#key-features)
-- [Live Demo & Screenshots](#live-demo--screenshots)
-- [Tech Stack](#tech-stack)
-- [Getting Started](#getting-started)
-- [Core Concepts](#core-concepts)
-- [Project Structure](#project-structure)
+</div>
 
-## Key Features
+---
 
-SplitIt is loaded with features, from the core money-splitting stuff to a full admin panel.
+## 🗺️ Architectural Overview
 
-### Core Functionality
+### System Data Flows & Infrastructure
+SplitIt runs on Next.js Server Components and API endpoints that connect to an Oracle Autonomous Database via Node.js Thin Driver connections. Below is a map demonstrating the flow from user action to background push notification dispatch:
 
--   🔐 **Secure Authentication**: Sign up with email or just use Google OAuth. Your data is safe—it's all protected by Firebase.
--   👨‍👩‍👧‍👦 **Groups**: Create a group for any occasion (road trip, roommates, etc.), invite people via email, manage members.
--   💸 **Flexible Expense Splitting**: The bread and butter of this app. Split expenses in multiple ways:
-    -   **Equally**: Everyone pays the same amount.
-    -   **Unequally**: Manually set how much each person owes.
-    -   **By Shares**: Good for when someone stays longer or gets more. Assign shares and split proportionally.
-    -   **By Percentage**: Allocate costs based on percentages (e.g., one person pays 60%, another 40%).
--   🤝 **Multiple Payers**: One expense can be paid by multiple people, because real life is messy.
--   📊 **Real-time Balances**: See exactly who owes whom in each group and your overall net balance across all groups.
--   💡 **Smart Debt Simplification**: Our algorithm figures out the minimum number of payments needed to clear all debts. Less transactions, more time for actual fun.
--   🗄️ **Archive Groups**: Once everyone pays up, archive a group to keep it as a record.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Client PWA
+    participant Next as Next.js Server / API
+    participant DB as Oracle NoSQL (SplitItDB Table)
+    participant VAPID as Web Push Service (VAPID)
+    participant SW as Service Worker (sw-push.js)
+    participant OS as OS Notification Center
 
-### User Experience
-
--   🏠 **Personal Dashboard**: See your net balance, who owes you, and who you owe at a glance.
--   📈 **Spending Analytics**: Check out your spending patterns with charts. Filter by date range to see trends.
--   📱 **Mobile-Friendly**: Works great on phones, tablets, and desktops. Split bills on the go.
--   🎨 **Custom Themes**: Pick from different color themes to personalize how the app looks.
--   🔍 **Global Search**: Hit `Ctrl+K` (or `⌘K` on Mac) to search for groups, expenses, or people instantly.
--   🔔 **Notifications**: Get announcements and alerts right inside the app.
-
-### Admin Panel
-
-A dedicated dashboard for admins to keep things running smoothly.
-
--   📈 **Site-Wide Statistics**: Get the big picture—how many users, groups, and total expenses in the system.
--   🛠️ **User & Group Management**: Need to fix something? Edit users, manage groups, or handle user data migrations.
--   ⚙️ **Customization Central**:
-    -   **Branding**: Change the app name, logos, and make it your own.
-    -   **Theming**: Create custom color themes that users can switch between.
-    -   **Content Management**: Update landing page content, about page, and legal pages.
-    -   **Expense Categories**: Manage the master list of categories so expenses are organized.
-    -   **Mail Configuration**: Connect your own SMTP server so transactional emails actually get sent.
--   📢 **Broadcast System**: Send in-app announcements or email everyone at once.
--   🎟️ **Ticket System**: Keep track of user support requests and issues.
-
-## Live Demo & Screenshots
-
-### Core Features in Action
-
-![Group Dashboard](/public/screenshots/group-activity.png)
-_Group activity view—see everything happening in your shared expense groups._
-
-![Group Analytics](/public/screenshots/group-analytics.png)
-_Get insights into group spending patterns with interactive charts and breakdowns._
-
-![Add Expense Form](/public/screenshots/expense-form.png)
-_Adding an expense? Choose from equal splits, percentage-based splits, or custom amounts._
-
-### Admin Panel
-
-Got admin access? The admin panel is where the magic happens—manage users, customize settings, and configure everything about your SplitIt instance.
-
-![Admin Site Settings](/public/screenshots/admin-site-settings.png)
-_Customize branding, manage themes, and control what appears across your app._
-
-![Admin Mail Configuration](/public/screenshots/admin-mail-config.png)
-_Set up your SMTP server so the app can send actual emails (password resets, notifications, etc.)._
-
-![Admin Theme Customization](/public/screenshots/admin-theme-customization.png)
-_Create and manage custom color themes that users can pick from._
-
-![Admin Ticket System](/public/screenshots/admin-ticket-system.png)
-_Handle user support requests and keep track of issues reported by users._
-
-## Tech Stack
-
-Built with a modern, scalable stack:
-
--   **Framework**: [Next.js](https://nextjs.org/) (with App Router)
--   **Backend & Database**: [Firebase](https://firebase.google.com/) (Authentication, Firestore)
--   **Styling**: [Tailwind CSS](https://tailwindcss.com/)
--   **UI Components**: [ShadCN UI](https://ui.shadcn.com/)
--   **Icons**: [Lucide React](https://lucide.dev/)
--   **Forms**: [React Hook Form](https://react-hook-form.com/) & [Zod](https://zod.dev/)
--   **Charts**: [Recharts](https://recharts.org/)
--   **AI (Optional)**: [Genkit](https://firebase.google.com/docs/genkit)
--   **Caching Layer**: [TanStack Query](https://tanstack.com/query/latest)
-
-## Security, Performance & Architecture Hardening
-
-We recently completed a series of high-impact upgrades to elevate SplitIt to a production-grade, highly secure, and optimized application.
-
-### 🔒 Security Hardening (Sprint 1)
-- **Server-Side Route Protection**: Implemented Next.js Edge Middleware to intercept routes (`/app/*` and `/admin/*`) server-side via httpOnly session cookies. This completely eliminates the "client-side redirect flash".
-- **Tamper-Proof Admin Claims**: Decoupled the admin role check from Firestore reads. The frontend now verifies admin status via the cryptographically signed ID Token claim (`role === 'admin'`).
-- **Endpoint Rate Limiting**: Added in-memory rate-limiting algorithms to protect sensitive API routes (e.g., SMTP test mail sender, admin promotion API) from automated abuse.
-- **Firebase Secret Management**: Moved all API keys and service account private credentials from local files into Firebase Secret Manager, referenced through `apphosting.yaml`.
-
-### ⚡ Performance & Architecture (Sprint 2)
-- **TanStack Caching Layer**: Configured a global QueryClient and custom queries (`useGroups`, `useExpenses`, `useGroupBalances`, `useSiteSettings`) with aggressive caching (30s stale time for transactional data, 5-minute stale time for site settings) to minimize Firestore reads.
-- **Batched Member Hydration**: Resolved the N+1 database querying issue in `getGroupsByUserId` by collecting all user IDs first and hydrating them in a single, batched Firestore operation.
-- **Site Settings In-Memory Cache**: Implemented a 60-second in-memory server cache for `getSiteSettings` to prevent redundant settings reads during expense creation category validations.
-- **Code Refactoring & Cleanup**: Renamed the monolithic `mock-data.ts` to `firestore.service.ts`, structuring it with clear comments and a layout for future service modules. Kept a lightweight `mock-data.ts` wrapper to maintain complete backwards compatibility.
-
-### 🔧 Code Quality, Testing & Multi-Currency (Sprint 3)
-- **Multi-Currency Support**: Added per-group dynamic currency configuration (pick ₹, $, €, £, ¥, etc.) and locale-aware number formatting, allowing dynamic currency symbols across all balances, expenses, and settlements.
-- **Robust Type-Safe Mappers**: Rewrote all Firestore data loading getters with structured, strongly-typed hydration mappers (`mapGroupDoc`, `mapExpenseDoc`, `mapSettlementDoc`, `mapHistoryDoc`, `mapSupportTicketDoc`), completely eliminating unsafe `as unknown as T` force typecasts.
-- **Isolate Component-Level Recovery**: Implemented elegant React Error Boundaries around all individual dashboard and detail cards (obligations, activity charts, spendings), so any localized data issues do not crash the entire app.
-- **Admin Cursor Pagination**: Refactored the site-wide admin users management panel to cursor-paginate users 10 at a time with query bounds, preventing full table scan performance hits.
-- **API and Storage Security**: Hardened backend endpoints with bearer authentication on notifications routes and established secure Storage rules limits for receipt images (5MB limit) and avatars (2MB limit).
-- **Automated Unit Testing Suite**: Installed and configured Vitest + JSDOM for unit testing core business algorithms, validating penny-rounding corrections on equal/shares/percentage splits, debt simplification, and balance aggregations with 100% test coverage.
-
-## Getting Started
-
-Here’s the quick setup to get SplitIt running locally.
-
-### Prerequisites
-
--   [Node.js](https://nodejs.org/) (v18 or later recommended)
--   A [Firebase](https://firebase.google.com/) account (the free "Spark" plan is sufficient)
--   [Firebase CLI](https://firebase.google.com/docs/cli) installed and authenticated (`npm install -g firebase-tools` and `firebase login`)
-
-### Firebase Project Setup
-
-1.  **Create a Firebase Project**:
-    -   Go to the [Firebase Console](https://console.firebase.google.com/).
-    -   Click "Add project" and follow the on-screen instructions.
-
-2.  **Register a Web App**:
-    -   In your project's dashboard, click the web icon (`</>`) to add a new web app.
-    -   Give it a nickname (e.g., "SplitIt Web") and register the app.
-    -   After registration, Firebase will show you a configuration object. Copy these credentials.
-
-3.  **Enable Authentication Methods**:
-    -   In the Firebase Console, go to **Build > Authentication** > **Sign-in method**.
-    -   Enable both **Email/Password** and **Google** providers.
-
-4.  **Set up Firestore Database**:
-    -   Go to **Build > Firestore Database** > **Create database**.
-    -   Start in **production mode**. This is crucial for security rules to work correctly.
-    -   Choose a location for your database.
-
-### Local Installation & Setup
-
-1.  **Clone the Repository**:
-    ```bash
-    git clone https://github.com/Yashraj-Jangra/SplitIt-SplitWise_Clone.git
-    cd SplitWise-Clone
-    ```
-
-2.  **Install Dependencies**:
-    ```bash
-    npm install
-    ```
-
-3.  **Create Environment File**:
-    -   Create a file named `.env` in the root of your project.
-    -   Add your Firebase **client-side** configuration (safe to expose):
-    ```env
-    # --- Firebase Client SDK (public) ---
-    NEXT_PUBLIC_FIREBASE_API_KEY=AIza...
-    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
-    NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
-    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project-id.appspot.com
-    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123...
-    NEXT_PUBLIC_FIREBASE_APP_ID=1:123...:web:...
-
-    # --- Firebase Admin SDK (server-only, never expose to client) ---
-    # Go to: Firebase Console > Project Settings > Service Accounts > Generate new private key
-    # Paste the entire JSON as a single-line string:
-    FIREBASE_SERVICE_ACCOUNT='{"type":"service_account",...}'
-
-    # --- Bootstrap Admin ---
-    # The email address that gets admin privileges on first signup.
-    # Additional admins can be promoted from the Admin Panel after this.
-    ADMIN_EMAIL=your-admin-email@example.com
-    ```
-
-4.  **Generate Firebase Service Account Key** (required for server-side API routes):
-    -   In Firebase Console, go to **Project Settings > Service Accounts**.
-    -   Click **Generate new private key** and download the JSON file.
-    -   Copy the entire JSON content (minified to one line) into `FIREBASE_SERVICE_ACCOUNT` in your `.env`.
-    -   **Never commit this key to version control.**
-
-5.  **Connect to Your Firebase Project**:
-    ```bash
-    npx firebase-tools use --add
-    ```
-
-6.  **Deploy Firestore Security Rules**:
-    ```bash
-    npx firebase-tools deploy --only firestore:rules
-    ```
-
-7.  **Run the Development Server**:
-    ```bash
-    npm run dev
-    ```
-    The application will be available at `http://localhost:3231`.
-
-## Core Concepts
-
--   **Groups**: Think of this as a container for shared activities. It has members, expenses, and eventually settlements. Everything revolves around groups.
--   **Expenses**: A single cost that someone paid for. The cool part? You can split it between people in tons of different ways.
--   **Settlements**: When person A pays person B to clear a debt. Our debt simplification algorithm figures out the most efficient way to settle everyone's debts.
-
-## Project Structure
-
-This project uses the Next.js App Router and a feature-based folder structure.
-
+    User->>Next: Adds Expense / Settlement
+    Next->>DB: putItem (Evicts in-memory Cache)
+    Next->>Next: serverDispatchNotification (local trigger)
+    Next->>VAPID: Sign & Post encrypted payload
+    VAPID-->>SW: Push Event Listener Fired
+    SW->>SW: getNotificationIcon(data.type)
+    SW->>OS: showNotification(title, options)
+    OS->>User: Displays Notification (Dynamic Right-Side Icon)
 ```
-/
-├── src/
-│   ├── app/            # Next.js App Router: layouts, pages, and loading states
-│   │   ├── (app)/      # Authenticated application routes (dashboard, groups)
-│   │   ├── (admin)/    # Admin panel routes
-│   │   ├── (auth)/     # Authentication pages (login, signup)
-│   │   ├── api/        # API routes for server-side logic
-│   │   └── ...
-│   ├── components/
-│   │   ├── auth/       # Authentication-related forms and components
-│   │   ├── dashboard/  # Dashboard-specific components and cards
-│   │   ├── expenses/   # Expense forms, list items, and dialogs
-│   │   ├── groups/     # Group management components
-│   │   ├── layout/     # Core layout components (App shell, sidebar, header)
-│   │   └── ui/         # Reusable UI components from ShadCN
-│   ├── contexts/       # React context providers for global state
-│   ├── firebase/       # Firebase configuration and custom error handling
-│   ├── hooks/          # Custom React hooks
-│   ├── lib/            # Core libraries, utilities, and data fetching logic
-│   └── types/          # TypeScript type definitions
-├── firebase.json       # Firebase deployment configuration
-├── firestore.rules     # Firestore security rules
-└── README.md           # You are here!
+
+---
+
+## 🎨 Core Features In-Depth
+
+### 💸 Financial Engines & Splitting Splits
+- **Multiple Splitting Schemes**:
+  - **Equally**: Costs split evenly. Features a penny-rounding algorithm (allocating the remaining remainder to the primary payer so totals match exactly).
+  - **Unequally**: Specify precise local currency amounts owed per participant.
+  - **By Shares**: Split proportionally by custom weights/shares.
+  - **By Percentage**: Allocate costs based on percentage targets (e.g. 60/40 splits).
+- **Multiple Payers**: Supports multiple members contributing different amounts to a single expense.
+- **Smart Debt Simplification**: Solves a flow reduction problem to minimize individual transactions. It aggregates all group balances and resolves them in the minimum possible number of individual transfers.
+- **Dynamic Multi-Currency support**: Supports dynamic local currency formats (₹, $, €, £, ¥, etc.) across different groups.
+
+### 📱 Notification Preference Settings & Channels
+- **Web Push (VAPID)**: Background push notifications mapped to category-specific visual icons.
+- **Granular Toggle Matrix**: Users can enable/disable In-App notifications, OS Push notifications, and Emails separately for each event type (expenses, settlements, reminders, broadcasts, support replies).
+- **In-App Notification Feed**: Popover bell containing unread counts, settings, and filter tabs (All, Groups, Payments, System, Reminders).
+
+### 🛠️ High-Density Admin Panel
+- **Branding Panel**: Customize the application name, icons, and legal documents.
+- **Dynamic Theming Editor**: Manage CSS theme custom variables that render globally for users.
+- **SMTP Mail Configuration**: Direct mail relays or Gmail OAuth setups to compile test mails and dispatch automated transactional alerts.
+- **Broadcast System**: Dispatch bulk messages or critical system alerts via email or in-app popovers.
+- **Ticketing Console**: View and reply to user-submitted help and support issues.
+
+---
+
+## 🗄️ Database Architecture & Key-Document Model
+
+SplitIt stores all documents in a single table `SplitItDB` in the **Oracle Autonomous Database** using a key-document schema. Relational lookups are mapped through Partition Keys (`PK`), Sort Keys (`SK`), and Global Secondary Indexes (`GSI1_PK`/`GSI1_SK`).
+
+```mermaid
+graph TD
+    subgraph "Oracle Autonomous Database (SplitItDB Table)"
+        U["PK: USER#usr_101<br>SK: PROFILE<br>Entity: USER<br>(Profile, Active settings, Role)"]
+        G["PK: GROUP#grp_202<br>SK: METADATA<br>Entity: GROUP<br>(Name, Created date, Member IDs)"]
+        E["PK: EXPENSE#exp_303<br>SK: METADATA<br>Entity: EXPENSE<br>(Payer, Split weights, Description)"]
+        S["PK: SETTLEMENT#set_404<br>SK: METADATA<br>Entity: SETTLEMENT<br>(From/To, Amount, Status)"]
+    end
+    U -->|Member of| G
+    G -->|Contains| E
+    G -->|Contains| S
 ```
+
+### Table Mappings Matrix
+
+| Entity Type | PK Format | SK Format | GSI1_PK | GSI1_SK | Payload Attributes (`DATA` JSON) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **USER** | `USER#<userId>` | `PROFILE` | `USER_EMAIL#<email>` | N/A | `firstName`, `lastName`, `email`, `role`, `upiId` |
+| **GROUP** | `GROUP#<groupId>` | `METADATA` | N/A | N/A | `name`, `members` `[ {userId, role} ]`, `archived` |
+| **EXPENSE** | `EXPENSE#<expenseId>` | `METADATA` | `GROUP#<groupId>` | `EXPENSE#<expenseId>` | `amount`, `payerId`, `splitType`, `participants`, `date` |
+| **SETTLEMENT** | `SETTLEMENT#<id>` | `METADATA` | `GROUP#<groupId>` | `SETTLEMENT#<id>` | `amount`, `fromUserId`, `toUserId`, `date`, `notes` |
+| **PREFERENCES** | `USER#<userId>` | `PREFS` | N/A | N/A | `emailEnabled`, `pushEnabled`, `events { type: { push, email } }` |
+
+### Database Read Cache (15s TTL)
+To maximize throughput and bypass network latency:
+- A transparent caching layer (`readCache`) is implemented in `src/lib/nosql.ts`.
+- It caches successful `getItem` and GSI query responses.
+- Write actions (`putItem` and `deleteItem`) automatically evict corresponding cache keys to maintain 100% data consistency.
+
+---
+
+## 🖼️ Application Interfaces & Screenshots
+
+Below are the screenshots of SplitIt's dashboards and management consoles:
+
+### 📱 Client Application
+<div align="center">
+
+![SplitIt Dashboard Screenshot](public/screenshots/dashboard.png)
+*App Dashboard — net balance dashboard, quick stats, obligations card.*
+
+![Group Dashboard](public/screenshots/group-activity.png)
+*Group Details — real-time group activity feed, members, and transactions.*
+
+![Group Analytics](public/screenshots/group-analytics.png)
+*Group Spendings — category distributions and trends over time.*
+
+![Add Expense Form](public/screenshots/expense-form.png)
+*Expense Builder — equal splits, shares, and custom percentages split selectors.*
+
+</div>
+
+### 🛠️ Admin Management Panel
+<div align="center">
+
+![Admin Site Settings](public/screenshots/admin-site-settings.png)
+*Site Customizations — branding, logos, legal page content configurations.*
+
+![Admin Mail Configuration](public/screenshots/admin-mail-config.png)
+*SMTP Mailer — mail relay parameters, dynamic port setup, and connection verifications.*
+
+![Admin Theme Customization](public/screenshots/admin-theme-customization.png)
+*Dynamic Themes — setup, customize, and deploy CSS var-based themes.*
+
+![Admin Ticket System](public/screenshots/admin-ticket-system.png)
+*Ticketing Console — manage user support requests and ticket feeds.*
+
+</div>
+
+---
+
+## ⚡ Key Optimizations & Security Layers
+
+1. **Better Auth Adapter & Session Fixes**:
+   The custom adapter `nosqlAuthAdapter` hydrates sessions, handles credential and Google OAuth profiles, links accounts automatically, and stores tokens in the Oracle DB.
+2. **Dynamic UPI Bridges**:
+   Implements an HTTP redirect route `/api/pay-upi` resolving standard `upi://` schemes, enabling tap-to-pay deep links to work in modern email clients.
+3. **No Loopback HTTP Calls**:
+   Server-side modules invoke the notification service via local Dynamic Imports, bypassing HTTP overhead and preventing connection errors.
+4. **CSS Double-Blink Choreography**:
+   Combines `useWatch` inputs and dynamic query caches to scroll, expand, and visually highlight target deep-linked items upon navigating from notifications.
+5. **No Firebase Messaging Overhead**:
+   Entirely clean of external notification modules. Web push is delivered directly via standard VAPID servers.
+
+---
+
+## ⚙️ Environment Configuration
+
+Configure the following variables in your local `.env.local` file:
+
+```env
+# ─── APPLICATION SETTINGS ──────────────────────────────────────────────────
+NODE_ENV=development
+NEXT_PUBLIC_APP_URL=http://localhost:3231
+BETTER_AUTH_URL=http://localhost:3231
+
+# ─── DATABASE CONFIGURATION (ORACLE AUTONOMOUS) ─────────────────────────────
+# ORA_WALLET_DIR points to the folder containing your Oracle Instant Client wallet
+ORA_WALLET_DIR=./wallet
+ORA_DB_USER=ADMIN
+ORA_DB_PASSWORD=your_db_password_here
+ORA_CONNECT_STRING=your_db_service_name_high
+
+# ─── AUTHENTICATION (BETTER AUTH) ───────────────────────────────────────────
+BETTER_AUTH_SECRET=your_better_auth_secret_32_character_string
+GOOGLE_CLIENT_ID=your_google_oauth_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
+
+# ─── PUSH NOTIFICATIONS (VAPID WEB PUSH) ────────────────────────────────────
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key
+VAPID_PRIVATE_KEY=your_vapid_private_key
+VAPID_EMAIL=mailto:admin@yourdomain.com
+
+# ─── STORAGE SERVICES (OCI OBJECT STORAGE) ──────────────────────────────────
+OCI_REGION=ap-mumbai-1
+OCI_NAMESPACE=your_oci_namespace
+OCI_S3_ACCESS_KEY=your_oci_s3_compat_access_key
+OCI_S3_SECRET_KEY=your_oci_s3_compat_secret_key
+OCI_STORAGE_BUCKET=splitit-storage
+
+# ─── BOOTSTRAP ADMINISTRATOR ───────────────────────────────────────────────
+# The email address promoted to admin on first registration
+ADMIN_EMAIL=admin@yourdomain.com
+INTERNAL_API_SECRET=your_shared_background_cron_key_secret
+```
+
+---
+
+## 🚀 Local Installation
+
+1. **Clone & Install**:
+   ```bash
+   git clone https://github.com/Yashraj-Jangra/SplitIt-SplitWise_Clone.git
+   cd SplitWise-Clone
+   npm install
+   ```
+
+2. **Add Wallet & Connection**:
+   Unzip your Oracle Database connection wallet folder into `./wallet`. Ensure your `.env.local` has the matching password and connection descriptors.
+
+3. **Run Dev Instance**:
+   ```bash
+   npm run dev
+   ```
+   Open `http://localhost:3231` in your browser.
